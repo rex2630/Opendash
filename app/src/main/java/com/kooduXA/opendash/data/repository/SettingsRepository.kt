@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
-// Create DataStore instance
 val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 @Singleton
@@ -22,35 +21,29 @@ class SettingsRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
 
-    // Keys for all settings
     companion object {
-        // Video Settings
         val VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
         val VIDEO_QUALITY = stringPreferencesKey("video_quality")
         val FRAME_RATE = intPreferencesKey("frame_rate")
         val BITRATE = stringPreferencesKey("bitrate")
         val CODEC = stringPreferencesKey("codec")
 
-        // Recording Settings
         val LOOP_RECORDING = booleanPreferencesKey("loop_recording")
         val LOOP_DURATION = intPreferencesKey("loop_duration")
         val AUTO_DELETE_OLDEST = booleanPreferencesKey("auto_delete_oldest")
         val PRE_BUFFER_RECORDING = booleanPreferencesKey("pre_buffer_recording")
         val PRE_BUFFER_SECONDS = intPreferencesKey("pre_buffer_seconds")
 
-        // Safety & Detection
         val G_SENSOR_SENSITIVITY = stringPreferencesKey("g_sensor_sensitivity")
         val IMPACT_DETECTION = booleanPreferencesKey("impact_detection")
         val PARKING_MODE = booleanPreferencesKey("parking_mode")
         val MOTION_DETECTION = booleanPreferencesKey("motion_detection")
         val MOTION_SENSITIVITY = stringPreferencesKey("motion_sensitivity")
 
-        // Audio Settings
         val AUDIO_RECORDING = booleanPreferencesKey("audio_recording")
         val MICROPHONE_SENSITIVITY = stringPreferencesKey("microphone_sensitivity")
         val AUDIO_FORMAT = stringPreferencesKey("audio_format")
 
-        // Network Settings
         val WIFI_AUTO_CONNECT = booleanPreferencesKey("wifi_auto_connect")
         val WIFI_SSID = stringPreferencesKey("wifi_ssid")
         val WIFI_PASSWORD = stringPreferencesKey("wifi_password")
@@ -59,7 +52,6 @@ class SettingsRepository @Inject constructor(
         val HOTSPOT_SSID = stringPreferencesKey("hotspot_ssid")
         val HOTSPOT_PASSWORD = stringPreferencesKey("hotspot_password")
 
-        // Image Settings
         val EXPOSURE_COMPENSATION = intPreferencesKey("exposure_compensation")
         val WHITE_BALANCE = stringPreferencesKey("white_balance")
         val CONTRAST = intPreferencesKey("contrast")
@@ -68,7 +60,6 @@ class SettingsRepository @Inject constructor(
         val HDR_ENABLED = booleanPreferencesKey("hdr_enabled")
         val NOISE_REDUCTION = booleanPreferencesKey("noise_reduction")
 
-        // Overlay Settings
         val WATERMARK_ENABLED = booleanPreferencesKey("watermark_enabled")
         val WATERMARK_TEXT = stringPreferencesKey("watermark_text")
         val TIMESTAMP_OVERLAY = booleanPreferencesKey("timestamp_overlay")
@@ -76,42 +67,35 @@ class SettingsRepository @Inject constructor(
         val GPS_OVERLAY = booleanPreferencesKey("gps_overlay")
         val SHOW_LOGO = booleanPreferencesKey("show_logo")
 
-        // UI Settings
         val NIGHT_MODE = booleanPreferencesKey("night_mode")
         val IMMERSIVE_MODE = booleanPreferencesKey("immersive_mode")
         val AUTO_HIDE_CONTROLS = booleanPreferencesKey("auto_hide_controls")
         val CONTROLS_TIMEOUT = intPreferencesKey("controls_timeout")
     }
 
-    // Data class to hold all settings
     data class AppSettings(
-        // Video Settings
         val videoResolution: String = "1080p",
         val videoQuality: String = "High",
         val frameRate: Int = 30,
         val bitrate: String = "8 Mbps",
         val codec: String = "H.264",
 
-        // Recording Settings
         val loopRecording: Boolean = true,
         val loopDuration: Int = 3,
         val autoDeleteOldest: Boolean = true,
         val preBufferRecording: Boolean = true,
         val preBufferSeconds: Int = 5,
 
-        // Safety & Detection
         val gSensorSensitivity: String = "Medium",
         val impactDetection: Boolean = true,
         val parkingMode: Boolean = false,
         val motionDetection: Boolean = true,
         val motionSensitivity: String = "Medium",
 
-        // Audio Settings
         val audioRecording: Boolean = true,
         val microphoneSensitivity: String = "Medium",
         val audioFormat: String = "AAC",
 
-        // Network Settings
         val wifiAutoConnect: Boolean = true,
         val wifiSSID: String = "OpenDash_Cam",
         val wifiPassword: String = "",
@@ -120,7 +104,6 @@ class SettingsRepository @Inject constructor(
         val hotspotSSID: String = "OpenDash_Hotspot",
         val hotspotPassword: String = "opendash123",
 
-        // Image Settings
         val exposureCompensation: Int = 0,
         val whiteBalance: String = "Auto",
         val contrast: Int = 50,
@@ -129,7 +112,6 @@ class SettingsRepository @Inject constructor(
         val hdrEnabled: Boolean = false,
         val noiseReduction: Boolean = true,
 
-        // Overlay Settings
         val watermarkEnabled: Boolean = true,
         val watermarkText: String = "OpenDash",
         val timestampOverlay: Boolean = true,
@@ -137,14 +119,12 @@ class SettingsRepository @Inject constructor(
         val gpsOverlay: Boolean = false,
         val showLogo: Boolean = true,
 
-        // UI Settings
         val nightMode: Boolean = false,
         val immersiveMode: Boolean = false,
         val autoHideControls: Boolean = true,
         val controlsTimeout: Int = 3000
     )
 
-    // Flow to get all settings
     val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { preferences ->
         AppSettings(
             videoResolution = preferences[VIDEO_RESOLUTION] ?: "1080p",
@@ -199,7 +179,6 @@ class SettingsRepository @Inject constructor(
         )
     }
 
-    // Individual setters
     suspend fun setNightMode(enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[NIGHT_MODE] = enabled
@@ -248,14 +227,12 @@ class SettingsRepository @Inject constructor(
         }
     }
 
-    // Reset to defaults
     suspend fun resetToDefaults() {
         context.settingsDataStore.edit { preferences ->
             preferences.clear()
         }
     }
 
-    // Update multiple settings at once
     suspend fun updateSettings(newSettings: AppSettings) {
         context.settingsDataStore.edit { preferences ->
             preferences[VIDEO_RESOLUTION] = newSettings.videoResolution
