@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -79,9 +80,7 @@ fun DashboardScreen(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-            }
+            item { Spacer(modifier = Modifier.height(8.dp)) }
 
             item {
                 ConnectionStatusCard(
@@ -102,9 +101,7 @@ fun DashboardScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF1E1E1E)
-                        )
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
                     ) {
                         Row(
                             modifier = Modifier
@@ -136,19 +133,19 @@ fun DashboardScreen(
                     EmptyFilesCard(connectionState = connectionState.value)
                 }
             } else {
-                items(files.value, key = { it.name }) { file ->
-                    val progress = downloadProgressMap[file.name]
+                items(files.value, key = { it.filename }) { file ->
+                    val progress = downloadProgressMap[file.filename]
 
                     VideoFileCard(
                         file = file,
                         downloadProgress = progress,
                         onDownload = {
-                            downloadProgressMap[file.name] = 0f
+                            downloadProgressMap[file.filename] = 0f
                             viewModel.downloadFile(
-                                url = file.url,
-                                filename = file.name,
+                                url = file.downloadUrl,
+                                filename = file.filename,
                                 onProgress = { progressValue ->
-                                    downloadProgressMap[file.name] = progressValue
+                                    downloadProgressMap[file.filename] = progressValue
                                 }
                             )
                         }
@@ -156,9 +153,7 @@ fun DashboardScreen(
                 }
             }
 
-            item {
-                Spacer(modifier = Modifier.height(24.dp))
-            }
+            item { Spacer(modifier = Modifier.height(24.dp)) }
         }
     }
 }
@@ -224,7 +219,6 @@ private fun ConnectionStatusCard(
             buttonAction = onConnect
             buttonEnabled = true
         }
-
         is CameraState.Scanning -> {
             title = stringResource(R.string.dashboard_connection_scanning)
             color = Color(0xFFFFC107)
@@ -232,7 +226,6 @@ private fun ConnectionStatusCard(
             buttonAction = {}
             buttonEnabled = false
         }
-
         is CameraState.Connecting -> {
             title = stringResource(R.string.dashboard_connection_connecting)
             color = Color(0xFFFFC107)
@@ -240,7 +233,6 @@ private fun ConnectionStatusCard(
             buttonAction = {}
             buttonEnabled = false
         }
-
         is CameraState.Connected -> {
             title = stringResource(R.string.dashboard_connection_connected)
             color = Color(0xFF00E676)
@@ -248,7 +240,6 @@ private fun ConnectionStatusCard(
             buttonAction = onDisconnect
             buttonEnabled = true
         }
-
         is CameraState.Error -> {
             title = stringResource(R.string.dashboard_connection_error)
             color = Color(0xFFEF5350)
@@ -262,13 +253,9 @@ private fun ConnectionStatusCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1E1E)
-        )
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = when (state) {
@@ -319,13 +306,9 @@ private fun DeviceStatusCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1E1E)
-        )
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(R.string.dashboard_device_status_title),
                 color = Color.White,
@@ -364,7 +347,7 @@ private fun DeviceStatusCard(
 
 @Composable
 private fun StatusRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     label: String,
     value: String,
     valueColor: Color
@@ -394,9 +377,7 @@ private fun StatusRow(
 }
 
 @Composable
-private fun SectionTitle(
-    title: String
-) {
+private fun SectionTitle(title: String) {
     Text(
         text = title,
         color = Color(0xFF00E676),
@@ -407,9 +388,7 @@ private fun SectionTitle(
 }
 
 @Composable
-private fun EmptyFilesCard(
-    connectionState: CameraState
-) {
+private fun EmptyFilesCard(connectionState: CameraState) {
     val message = when (connectionState) {
         is CameraState.Connected -> stringResource(R.string.dashboard_empty_connected)
         is CameraState.Connecting -> stringResource(R.string.dashboard_empty_connecting)
@@ -422,9 +401,7 @@ private fun EmptyFilesCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1E1E)
-        )
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
     ) {
         Column(
             modifier = Modifier
@@ -459,13 +436,9 @@ private fun VideoFileCard(
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .clickable { },
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1E1E)
-        )
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -476,18 +449,16 @@ private fun VideoFileCard(
                     tint = Color(0xFF00E676)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = file.name,
+                        text = file.filename,
                         color = Color.White,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Medium
                     )
 
                     val details = buildString {
-                        append(file.date)
+                        append(file.time)
                         if (file.size.isNotBlank()) {
                             append(" • ")
                             append(file.size)
