@@ -5,7 +5,6 @@ import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,25 +30,23 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kooduXA.opendash.R
 import com.kooduXA.opendash.data.protocol.DeviceStatus
 import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.VideoFile
@@ -60,11 +57,11 @@ fun DashboardScreen(
     onOpenSettings: () -> Unit,
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
-    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
-    val files by viewModel.files.collectAsStateWithLifecycle()
-    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
-    val deviceStatus by viewModel.deviceStatus.collectAsStateWithLifecycle()
-    val debugMessage by viewModel.debugMessage.collectAsStateWithLifecycle()
+    val connectionState = viewModel.connectionState.collectAsStateWithLifecycle()
+    val files = viewModel.files.collectAsStateWithLifecycle()
+    val isRefreshing = viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val deviceStatus = viewModel.deviceStatus.collectAsStateWithLifecycle()
+    val debugMessage = viewModel.debugMessage.collectAsStateWithLifecycle()
 
     val downloadProgressMap = remember { mutableStateMapOf<String, Float>() }
 
@@ -88,18 +85,18 @@ fun DashboardScreen(
 
             item {
                 ConnectionStatusCard(
-                    state = connectionState,
-                    debugMessage = debugMessage,
+                    state = connectionState.value,
+                    debugMessage = debugMessage.value,
                     onConnect = { viewModel.connect() },
                     onDisconnect = { viewModel.disconnect() }
                 )
             }
 
             item {
-                DeviceStatusCard(deviceStatus = deviceStatus)
+                DeviceStatusCard(deviceStatus = deviceStatus.value)
             }
 
-            if (isRefreshing) {
+            if (isRefreshing.value) {
                 item {
                     Card(
                         modifier = Modifier
@@ -122,7 +119,7 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
-                                text = "Refreshing camera data...",
+                                text = stringResource(R.string.dashboard_status_refreshing),
                                 color = Color.White
                             )
                         }
@@ -131,15 +128,15 @@ fun DashboardScreen(
             }
 
             item {
-                SectionTitle("Recordings")
+                SectionTitle(stringResource(R.string.dashboard_section_recordings))
             }
 
-            if (files.isEmpty()) {
+            if (files.value.isEmpty()) {
                 item {
-                    EmptyFilesCard(connectionState = connectionState)
+                    EmptyFilesCard(connectionState = connectionState.value)
                 }
             } else {
-                items(files, key = { it.name }) { file ->
+                items(files.value, key = { it.name }) { file ->
                     val progress = downloadProgressMap[file.name]
 
                     VideoFileCard(
@@ -180,7 +177,7 @@ private fun DashboardTopBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "OpenDash",
+            text = stringResource(R.string.dashboard_title),
             color = Color.White,
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
@@ -190,7 +187,7 @@ private fun DashboardTopBar(
         IconButton(onClick = onRefresh) {
             Icon(
                 imageVector = Icons.Default.Refresh,
-                contentDescription = "Refresh",
+                contentDescription = stringResource(R.string.dashboard_refresh),
                 tint = Color.White
             )
         }
@@ -198,7 +195,7 @@ private fun DashboardTopBar(
         IconButton(onClick = onOpenSettings) {
             Icon(
                 imageVector = Icons.Default.Settings,
-                contentDescription = "Settings",
+                contentDescription = stringResource(R.string.dashboard_settings),
                 tint = Color.White
             )
         }
@@ -213,55 +210,51 @@ private fun ConnectionStatusCard(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit
 ) {
-    val (title, color, buttonLabel, buttonAction, buttonEnabled) = when (state) {
+    val title: String
+    val color: Color
+    val buttonLabel: String
+    val buttonAction: () -> Unit
+    val buttonEnabled: Boolean
+
+    when (state) {
         is CameraState.Disconnected -> {
-            Quintuple(
-                "Disconnected",
-                Color(0xFFEF5350),
-                "Connect",
-                onConnect,
-                true
-            )
+            title = stringResource(R.string.dashboard_connection_disconnected)
+            color = Color(0xFFEF5350)
+            buttonLabel = stringResource(R.string.dashboard_action_connect)
+            buttonAction = onConnect
+            buttonEnabled = true
         }
 
         is CameraState.Scanning -> {
-            Quintuple(
-                "Scanning for camera",
-                Color(0xFFFFC107),
-                "Scanning...",
-                {},
-                false
-            )
+            title = stringResource(R.string.dashboard_connection_scanning)
+            color = Color(0xFFFFC107)
+            buttonLabel = stringResource(R.string.dashboard_action_scanning)
+            buttonAction = {}
+            buttonEnabled = false
         }
 
         is CameraState.Connecting -> {
-            Quintuple(
-                "Connecting to camera",
-                Color(0xFFFFC107),
-                "Connecting...",
-                {},
-                false
-            )
+            title = stringResource(R.string.dashboard_connection_connecting)
+            color = Color(0xFFFFC107)
+            buttonLabel = stringResource(R.string.dashboard_action_connecting)
+            buttonAction = {}
+            buttonEnabled = false
         }
 
         is CameraState.Connected -> {
-            Quintuple(
-                "Connected",
-                Color(0xFF00E676),
-                "Disconnect",
-                onDisconnect,
-                true
-            )
+            title = stringResource(R.string.dashboard_connection_connected)
+            color = Color(0xFF00E676)
+            buttonLabel = stringResource(R.string.dashboard_action_disconnect)
+            buttonAction = onDisconnect
+            buttonEnabled = true
         }
 
         is CameraState.Error -> {
-            Quintuple(
-                "Connection error",
-                Color(0xFFEF5350),
-                "Retry",
-                onConnect,
-                true
-            )
+            title = stringResource(R.string.dashboard_connection_error)
+            color = Color(0xFFEF5350)
+            buttonLabel = stringResource(R.string.dashboard_action_retry)
+            buttonAction = onConnect
+            buttonEnabled = true
         }
     }
 
@@ -299,7 +292,7 @@ private fun ConnectionStatusCard(
             Text(
                 text = when (state) {
                     is CameraState.Error -> state.message
-                    else -> debugMessage ?: "No status details"
+                    else -> debugMessage ?: stringResource(R.string.dashboard_status_no_details)
                 },
                 color = Color.Gray,
                 style = MaterialTheme.typography.bodyMedium
@@ -334,7 +327,7 @@ private fun DeviceStatusCard(
             modifier = Modifier.padding(16.dp)
         ) {
             Text(
-                text = "Device status",
+                text = stringResource(R.string.dashboard_device_status_title),
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
@@ -344,8 +337,12 @@ private fun DeviceStatusCard(
 
             StatusRow(
                 icon = Icons.Default.FiberManualRecord,
-                label = "Recording",
-                value = if (deviceStatus.isRecording) "Yes" else "No",
+                label = stringResource(R.string.dashboard_device_status_recording),
+                value = if (deviceStatus.isRecording) {
+                    stringResource(R.string.dashboard_device_status_yes)
+                } else {
+                    stringResource(R.string.dashboard_device_status_no)
+                },
                 valueColor = if (deviceStatus.isRecording) Color(0xFF00E676) else Color.Gray
             )
 
@@ -353,8 +350,12 @@ private fun DeviceStatusCard(
 
             StatusRow(
                 icon = Icons.Default.SdStorage,
-                label = "SD card",
-                value = if (deviceStatus.hasSdCard) "Present" else "Missing",
+                label = stringResource(R.string.dashboard_device_status_sdcard),
+                value = if (deviceStatus.hasSdCard) {
+                    stringResource(R.string.dashboard_device_status_present)
+                } else {
+                    stringResource(R.string.dashboard_device_status_missing)
+                },
                 valueColor = if (deviceStatus.hasSdCard) Color(0xFF00E676) else Color(0xFFEF5350)
             )
         }
@@ -410,11 +411,11 @@ private fun EmptyFilesCard(
     connectionState: CameraState
 ) {
     val message = when (connectionState) {
-        is CameraState.Connected -> "No recordings found on the camera."
-        is CameraState.Connecting -> "Connecting to the camera..."
-        is CameraState.Scanning -> "Scanning for available camera..."
-        is CameraState.Error -> "Unable to load recordings because the connection failed."
-        is CameraState.Disconnected -> "Connect to the camera to load recordings."
+        is CameraState.Connected -> stringResource(R.string.dashboard_empty_connected)
+        is CameraState.Connecting -> stringResource(R.string.dashboard_empty_connecting)
+        is CameraState.Scanning -> stringResource(R.string.dashboard_empty_scanning)
+        is CameraState.Error -> stringResource(R.string.dashboard_empty_error)
+        is CameraState.Disconnected -> stringResource(R.string.dashboard_empty_disconnected)
     }
 
     Card(
@@ -504,7 +505,7 @@ private fun VideoFileCard(
                 IconButton(onClick = onDownload) {
                     Icon(
                         imageVector = Icons.Default.CloudDownload,
-                        contentDescription = "Download file",
+                        contentDescription = stringResource(R.string.dashboard_download_file),
                         tint = Color.White
                     )
                 }
@@ -520,11 +521,3 @@ private fun VideoFileCard(
         }
     }
 }
-
-private data class Quintuple<A, B, C, D, E>(
-    val first: A,
-    val second: B,
-    val third: C,
-    val fourth: D,
-    val fifth: E
-)
