@@ -10,7 +10,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.annotation.RequiresApi
-import com.kooduXA.opendash.data.debug.DebugLogStore
+import com.kooduXA.opendash.data.debug.AppLogger
 import com.kooduXA.opendash.data.protocol.AppHttpProtocol
 import com.kooduXA.opendash.data.protocol.CameraProtocol
 import com.kooduXA.opendash.data.protocol.DeviceStatus
@@ -61,15 +61,15 @@ class ConnectionRepository @Inject constructor(
                 disconnectInternal(clearState = false)
 
                 _connectionState.value = CameraState.Scanning
-                DebugLogStore.i(TAG, "Starting camera discovery")
+                AppLogger.i(TAG, "Starting camera discovery")
 
                 val manualCameraIp = getManualCameraIp()
                 val gatewayIp = getGatewayInfo()?.gatewayIp
                 val candidateIps = buildCandidateIps(manualCameraIp, gatewayIp)
 
-                DebugLogStore.d(TAG, "Manual IP: $manualCameraIp")
-                DebugLogStore.d(TAG, "Gateway IP: $gatewayIp")
-                DebugLogStore.d(TAG, "Candidate IPs: $candidateIps")
+                AppLogger.d(TAG, "Manual IP: $manualCameraIp")
+                AppLogger.d(TAG, "Gateway IP: $gatewayIp")
+                AppLogger.d(TAG, "Candidate IPs: $candidateIps")
 
                 val protocolFactories: List<() -> CameraProtocol> = listOf(
                     { AppHttpProtocol(context) },
@@ -81,16 +81,16 @@ class ConnectionRepository @Inject constructor(
                 outer@ for (ip in candidateIps) {
                     coroutineContext.ensureActive()
                     _connectionState.value = CameraState.Connecting
-                    DebugLogStore.i(TAG, "Trying IP: $ip")
+                    AppLogger.i(TAG, "Trying IP: $ip")
 
                     for (factory in protocolFactories) {
                         val protocol = factory()
-                        DebugLogStore.d(TAG, "Probing ${protocol.protocolName} on $ip")
+                        AppLogger.d(TAG, "Probing ${protocol.protocolName} on $ip")
 
                         val canHandle = try {
                             protocol.canHandle(ip)
                         } catch (e: Exception) {
-                            DebugLogStore.e(
+                            AppLogger.e(
                                 TAG,
                                 "Probe failed for ${protocol.protocolName} on $ip",
                                 e
@@ -98,7 +98,7 @@ class ConnectionRepository @Inject constructor(
                             false
                         }
 
-                        DebugLogStore.d(
+                        AppLogger.d(
                             TAG,
                             "Probe result ${protocol.protocolName} on $ip -> $canHandle"
                         )
@@ -106,10 +106,10 @@ class ConnectionRepository @Inject constructor(
                         if (!canHandle) continue
 
                         val success = try {
-                            DebugLogStore.i(TAG, "Connecting ${protocol.protocolName} on $ip")
+                            AppLogger.i(TAG, "Connecting ${protocol.protocolName} on $ip")
                             protocol.connect(ip)
                         } catch (e: Exception) {
-                            DebugLogStore.e(
+                            AppLogger.e(
                                 TAG,
                                 "Connect failed for ${protocol.protocolName} on $ip",
                                 e
@@ -117,14 +117,14 @@ class ConnectionRepository @Inject constructor(
                             false
                         }
 
-                        DebugLogStore.d(
+                        AppLogger.d(
                             TAG,
                             "Connect result ${protocol.protocolName} on $ip -> $success"
                         )
 
                         if (success) {
                             connectedProtocol = protocol
-                            DebugLogStore.i(
+                            AppLogger.i(
                                 TAG,
                                 "Connected using ${protocol.protocolName} on $ip"
                             )
@@ -139,10 +139,10 @@ class ConnectionRepository @Inject constructor(
                 } else {
                     _activeProtocol.value = null
                     _connectionState.value = CameraState.Error("No supported camera found")
-                    DebugLogStore.w(TAG, "Discovery finished: no supported camera found")
+                    AppLogger.w(TAG, "Discovery finished: no supported camera found")
                 }
             } catch (e: Exception) {
-                DebugLogStore.e(TAG, "startDiscovery failed", e)
+                AppLogger.e(TAG, "startDiscovery failed", e)
                 _activeProtocol.value = null
                 _connectionState.value =
                     CameraState.Error("Discovery failed: ${e.message ?: "unknown error"}")
@@ -158,16 +158,16 @@ class ConnectionRepository @Inject constructor(
         try {
             protocolStateJob?.cancel()
             protocolStateJob = null
-            DebugLogStore.d(TAG, "Disconnecting active protocol")
+            AppLogger.d(TAG, "Disconnecting active protocol")
             _activeProtocol.value?.disconnect()
         } catch (e: Exception) {
-            DebugLogStore.e(TAG, "Disconnect failed", e)
+            AppLogger.e(TAG, "Disconnect failed", e)
         } finally {
             _activeProtocol.value = null
             if (clearState) {
                 _connectionState.value = CameraState.Disconnected
             }
-            DebugLogStore.d(TAG, "Disconnect completed clearState=$clearState")
+            AppLogger.d(TAG, "Disconnect completed clearState=$clearState")
         }
     }
 
@@ -175,7 +175,7 @@ class ConnectionRepository @Inject constructor(
         protocolStateJob?.cancel()
         protocolStateJob = scope.launch {
             protocol.connectionState.collectLatest { state ->
-                DebugLogStore.d(TAG, "Protocol state from ${protocol.protocolName}: $state")
+                AppLogger.d(TAG, "Protocol state from ${protocol.protocolName}: $state")
                 _connectionState.value = state
             }
         }
@@ -184,7 +184,7 @@ class ConnectionRepository @Inject constructor(
     private suspend fun getManualCameraIp(): String? {
         val ip = settingsRepository.settingsFlow.first().cameraIp.trim()
         val result = ip.takeIf { it.isNotEmpty() }
-        DebugLogStore.d(TAG, "Resolved manual camera IP: $result")
+        AppLogger.d(TAG, "Resolved manual camera IP: $result")
         return result
     }
 
@@ -194,24 +194,24 @@ class ConnectionRepository @Inject constructor(
             context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
         val activeNetwork: Network = connectivityManager.activeNetwork ?: run {
-            DebugLogStore.w(TAG, "No active network")
+            AppLogger.w(TAG, "No active network")
             return null
         }
 
         val caps: NetworkCapabilities =
             connectivityManager.getNetworkCapabilities(activeNetwork) ?: run {
-                DebugLogStore.w(TAG, "No network capabilities for active network")
+                AppLogger.w(TAG, "No network capabilities for active network")
                 return null
             }
 
         if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-            DebugLogStore.d(TAG, "Active network is not Wi-Fi")
+            AppLogger.d(TAG, "Active network is not Wi-Fi")
             return null
         }
 
         val linkProperties: LinkProperties =
             connectivityManager.getLinkProperties(activeNetwork) ?: run {
-                DebugLogStore.w(TAG, "No LinkProperties for active network")
+                AppLogger.w(TAG, "No LinkProperties for active network")
                 return null
             }
 
@@ -221,7 +221,7 @@ class ConnectionRepository @Inject constructor(
             ?.hostAddress
             ?: linkProperties.dhcpServerAddress?.hostAddress
 
-        DebugLogStore.d(TAG, "Resolved gateway from LinkProperties: $gateway")
+        AppLogger.d(TAG, "Resolved gateway from LinkProperties: $gateway")
 
         return gateway?.takeIf { it.isNotBlank() }?.let {
             WifiInfo(ssid = "Unknown", gatewayIp = it)
@@ -246,17 +246,17 @@ class ConnectionRepository @Inject constructor(
             .filter { it.isNotEmpty() }
             .distinct()
 
-        DebugLogStore.d(TAG, "Built candidate IP list: $candidates")
+        AppLogger.d(TAG, "Built candidate IP list: $candidates")
         return candidates
     }
 
     suspend fun getRecordings(): List<VideoFile> {
         return try {
             val recordings = _activeProtocol.value?.getFileList() ?: emptyList()
-            DebugLogStore.d(TAG, "getRecordings -> ${recordings.size} files")
+            AppLogger.d(TAG, "getRecordings -> ${recordings.size} files")
             recordings
         } catch (e: Exception) {
-            DebugLogStore.e(TAG, "getRecordings failed", e)
+            AppLogger.e(TAG, "getRecordings failed", e)
             emptyList()
         }
     }
@@ -267,7 +267,7 @@ class ConnectionRepository @Inject constructor(
         onProgress: (Float) -> Unit
     ) {
         withContext(Dispatchers.IO) {
-            DebugLogStore.i(TAG, "Starting download filename=$filename url=$url")
+            AppLogger.i(TAG, "Starting download filename=$filename url=$url")
 
             val resolver = context.contentResolver
             val contentValues = ContentValues().apply {
@@ -287,7 +287,7 @@ class ConnectionRepository @Inject constructor(
                     val request = Request.Builder().url(url).build()
 
                     downloadClient.newCall(request).execute().use { response ->
-                        DebugLogStore.d(
+                        AppLogger.d(
                             TAG,
                             "Download response code=${response.code} filename=$filename"
                         )
@@ -320,7 +320,7 @@ class ConnectionRepository @Inject constructor(
                         }
 
                         outputStream.flush()
-                        DebugLogStore.i(
+                        AppLogger.i(
                             TAG,
                             "Download completed filename=$filename bytesCopied=$bytesCopied"
                         )
@@ -328,7 +328,7 @@ class ConnectionRepository @Inject constructor(
                 } ?: throw IOException("Failed to open MediaStore output stream")
             } catch (e: Exception) {
                 resolver.delete(uri, null, null)
-                DebugLogStore.e(TAG, "Download failed filename=$filename", e)
+                AppLogger.e(TAG, "Download failed filename=$filename", e)
                 throw e
             }
         }
@@ -336,20 +336,20 @@ class ConnectionRepository @Inject constructor(
 
     suspend fun getStorageInfo() = try {
         val info = activeProtocol.value?.getStorageInfo()
-        DebugLogStore.d(TAG, "getStorageInfo -> $info")
+        AppLogger.d(TAG, "getStorageInfo -> $info")
         info
     } catch (e: Exception) {
-        DebugLogStore.e(TAG, "getStorageInfo failed", e)
+        AppLogger.e(TAG, "getStorageInfo failed", e)
         null
     }
 
     suspend fun formatSdCard(): Boolean {
         return try {
             val result = activeProtocol.value?.formatSdCard() ?: false
-            DebugLogStore.d(TAG, "formatSdCard -> $result")
+            AppLogger.d(TAG, "formatSdCard -> $result")
             result
         } catch (e: Exception) {
-            DebugLogStore.e(TAG, "formatSdCard failed", e)
+            AppLogger.e(TAG, "formatSdCard failed", e)
             false
         }
     }
@@ -360,10 +360,10 @@ class ConnectionRepository @Inject constructor(
                 is NovatekCgiProtocol -> protocol.setAudioRecording(enabled)
                 else -> false
             }
-            DebugLogStore.d(TAG, "setAudioRecording enabled=$enabled -> $result")
+            AppLogger.d(TAG, "setAudioRecording enabled=$enabled -> $result")
             result
         } catch (e: Exception) {
-            DebugLogStore.e(TAG, "setAudioRecording failed", e)
+            AppLogger.e(TAG, "setAudioRecording failed", e)
             false
         }
     }
@@ -375,10 +375,10 @@ class ConnectionRepository @Inject constructor(
                 is AppHttpProtocol -> protocol.getDeviceStatus()
                 else -> DeviceStatus(isRecording = false, hasSdCard = false)
             }
-            DebugLogStore.d(TAG, "getDeviceStatus -> $status")
+            AppLogger.d(TAG, "getDeviceStatus -> $status")
             status
         } catch (e: Exception) {
-            DebugLogStore.e(TAG, "getDeviceStatus failed", e)
+            AppLogger.e(TAG, "getDeviceStatus failed", e)
             DeviceStatus(isRecording = false, hasSdCard = false)
         }
     }
@@ -390,10 +390,10 @@ class ConnectionRepository @Inject constructor(
                 is AppHttpProtocol -> protocol.setWifiCredentials(ssid, pass)
                 else -> false
             }
-            DebugLogStore.d(TAG, "updateWifi ssid=$ssid -> $result")
+            AppLogger.d(TAG, "updateWifi ssid=$ssid -> $result")
             result
         } catch (e: Exception) {
-            DebugLogStore.e(TAG, "updateWifi failed", e)
+            AppLogger.e(TAG, "updateWifi failed", e)
             false
         }
     }
