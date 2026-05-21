@@ -177,7 +177,6 @@ fun OpenDashApp() {
 
         AppScreen.Gallery -> {
             EnhancedLocalGalleryScreen(
-                colors = DayColors,
                 onBack = { currentScreen = AppScreen.Dashboard }
             )
         }
