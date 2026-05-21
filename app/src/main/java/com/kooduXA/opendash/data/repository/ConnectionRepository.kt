@@ -25,6 +25,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -36,7 +37,8 @@ import kotlin.coroutines.coroutineContext
 
 @Singleton
 class ConnectionRepository @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val settingsRepository: SettingsRepository
 ) {
 
     private val _connectionState = MutableStateFlow<CameraState>(CameraState.Disconnected)
@@ -56,16 +58,30 @@ class ConnectionRepository @Inject constructor(
                 _connectionState.value = CameraState.Scanning
                 Log.d(TAG, "Starting camera discovery")
 
+                val manualCameraIp = getManualCameraIp()
+                Log.d(TAG, "Manual camera IP from settings: ${manualCameraIp ?: "<empty>"}")
+
                 val wifiInfo = getGatewayInfo()
-                if (wifiInfo == null) {
-                    Log.e(TAG, "No Wi-Fi gateway info found")
-                    _connectionState.value = CameraState.Error("No Wi-Fi connection found")
+                val gatewayIp = wifiInfo?.gatewayIp
+
+                if (gatewayIp != null) {
+                    Log.d(TAG, "Active Wi-Fi gateway: $gatewayIp")
+                } else {
+                    Log.w(TAG, "No Wi-Fi gateway info found")
+                }
+
+                val candidateIps = buildCandidateIps(
+                    manualIp = manualCameraIp,
+                    gatewayIp = gatewayIp
+                )
+
+                if (candidateIps.isEmpty()) {
+                    Log.e(TAG, "No candidate IPs available")
+                    _activeProtocol.value = null
+                    _connectionState.value = CameraState.Error("No camera IP candidates available")
                     return@launch
                 }
 
-                Log.d(TAG, "Active Wi-Fi gateway: ${wifiInfo.gatewayIp}")
-
-                val candidateIps = buildCandidateIps(wifiInfo.gatewayIp)
                 Log.d(TAG, "Candidate camera IPs: $candidateIps")
 
                 var connectedProtocol: CameraProtocol? = null
@@ -100,13 +116,15 @@ class ConnectionRepository @Inject constructor(
                     Log.d(TAG, "Discovery complete: camera connected")
                 } else {
                     _activeProtocol.value = null
-                    _connectionState.value = CameraState.Error("Camera handshake failed on all candidate IPs")
+                    _connectionState.value =
+                        CameraState.Error("Camera handshake failed on all candidate IPs")
                     Log.e(TAG, "Discovery failed on all candidate IPs")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "startDiscovery failed", e)
                 _activeProtocol.value = null
-                _connectionState.value = CameraState.Error("Discovery failed: ${e.message ?: "unknown error"}")
+                _connectionState.value =
+                    CameraState.Error("Discovery failed: ${e.message ?: "unknown error"}")
             }
         }
     }
@@ -120,6 +138,11 @@ class ConnectionRepository @Inject constructor(
             _activeProtocol.value = null
             _connectionState.value = CameraState.Disconnected
         }
+    }
+
+    private suspend fun getManualCameraIp(): String? {
+        val ip = settingsRepository.settingsFlow.first().cameraIp.trim()
+        return ip.takeIf { it.isNotEmpty() }
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
@@ -168,8 +191,12 @@ class ConnectionRepository @Inject constructor(
         }
     }
 
-    private fun buildCandidateIps(gatewayIp: String): List<String> {
+    private fun buildCandidateIps(
+        manualIp: String?,
+        gatewayIp: String?
+    ): List<String> {
         val fallbacks = listOf(
+            manualIp,
             gatewayIp,
             "192.168.0.1",
             "192.168.1.1",
@@ -177,7 +204,7 @@ class ConnectionRepository @Inject constructor(
         )
 
         return fallbacks
-            .map { it.trim() }
+            .mapNotNull { it?.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
     }
