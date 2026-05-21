@@ -24,6 +24,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Show repository files
+        run: |
+          pwd
+          ls -la
+          echo "---- root build.gradle.kts ----"
+          sed -n '1,80p' build.gradle.kts
+          echo "---- settings.gradle.kts ----"
+          sed -n '1,120p' settings.gradle.kts
+          echo "---- app/build.gradle.kts ----"
+          sed -n '1,220p' app/build.gradle.kts
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
