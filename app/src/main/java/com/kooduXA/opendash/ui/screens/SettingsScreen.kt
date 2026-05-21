@@ -69,14 +69,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.kooduXA.opendash.BuildConfig
 import com.kooduXA.opendash.R
 
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onBack: () -> Unit,
-    onOpenDebugConsole: () -> Unit
+    onOpenDebugConsole: () -> Unit,
+    showDeveloperSection: Boolean = false
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -189,7 +189,7 @@ fun SettingsScreen(
                 }
             }
 
-            if (BuildConfig.DEBUG) {
+            if (showDeveloperSection) {
                 item {
                     SectionHeader(text = "Developer")
                     SettingsGroup {
