@@ -13,6 +13,7 @@
 package com.kooduXA.opendash
 
 import android.Manifest
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -25,7 +26,11 @@ import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -78,11 +83,16 @@ class MainActivity : ComponentActivity() {
                         onRequestPermissions = { requestRequiredPermissions() },
                         onContinueWithoutPermissions = {
                             Log.w(TAG, "Continuing without all recommended permissions")
-                        }
+                        },
+                        showDeveloperSection = isAppDebuggable()
                     )
                 }
             }
         }
+    }
+
+    private fun isAppDebuggable(): Boolean {
+        return (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     }
 
     private fun requestRequiredPermissions() {
@@ -136,11 +146,12 @@ fun OpenDashRoot(
     permissionRequestedOnce: Boolean,
     missingPermissions: List<String>,
     onRequestPermissions: () -> Unit,
-    onContinueWithoutPermissions: () -> Unit
+    onContinueWithoutPermissions: () -> Unit,
+    showDeveloperSection: Boolean
 ) {
     if (permissionsGranted) {
         OpenDashApp(
-            isDebugBuild = BuildConfig.DEBUG
+            showDeveloperSection = showDeveloperSection
         )
     } else {
         AppPermissionGate(
@@ -155,7 +166,7 @@ fun OpenDashRoot(
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
 fun OpenDashApp(
-    isDebugBuild: Boolean
+    showDeveloperSection: Boolean
 ) {
     var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Dashboard) }
 
@@ -175,7 +186,7 @@ fun OpenDashApp(
             SettingsScreen(
                 onBack = { currentScreen = AppScreen.Dashboard },
                 onOpenDebugConsole = { currentScreen = AppScreen.DebugConsole },
-                showDeveloperSection = isDebugBuild
+                showDeveloperSection = showDeveloperSection
             )
         }
 
