@@ -30,9 +30,12 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.AlertDialog
@@ -48,10 +51,10 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,9 +63,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kooduXA.opendash.R
 
 @Composable
@@ -70,20 +76,19 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onBack: () -> Unit
 ) {
-    val settings by viewModel.settings.collectAsState()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // Dialog States
     var showResolutionDialog by remember { mutableStateOf(false) }
     var showWifiDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showCameraIpDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF121212)) // Deep Dark Background
+            .background(Color(0xFF121212))
     ) {
-        // --- HEADER ---
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -107,13 +112,11 @@ fun SettingsScreen(
             )
         }
 
-        // --- CONTENT ---
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // SECTION 1: VIDEO
             item {
                 SectionHeader(text = stringResource(R.string.settings_section_video_recording))
                 SettingsGroup {
@@ -140,7 +143,6 @@ fun SettingsScreen(
                 }
             }
 
-            // SECTION 2: CONNECTIVITY
             item {
                 SectionHeader(text = stringResource(R.string.settings_section_connectivity))
                 SettingsGroup {
@@ -151,6 +153,15 @@ fun SettingsScreen(
                         onClick = { showWifiDialog = true }
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
+
+                    SettingsItem(
+                        icon = Icons.Default.Language,
+                        title = "Camera IP / Gateway IP",
+                        subtitle = settings.cameraIp.ifBlank { "Auto detect (recommended)" },
+                        onClick = { showCameraIpDialog = true }
+                    )
+                    Divider(color = Color.DarkGray, thickness = 0.5.dp)
+
                     SwitchItem(
                         icon = Icons.Default.WifiTethering,
                         title = stringResource(R.string.settings_auto_connect_title),
@@ -161,7 +172,6 @@ fun SettingsScreen(
                 }
             }
 
-            // SECTION 3: SYSTEM
             item {
                 SectionHeader(text = stringResource(R.string.settings_section_system))
                 SettingsGroup {
@@ -175,12 +185,10 @@ fun SettingsScreen(
                 }
             }
 
-            // SECTION 4: ABOUT
             item {
                 SectionHeader(text = stringResource(R.string.about_section_title))
 
                 SettingsGroup {
-                    // Description Dialog Trigger
                     SettingsItem(
                         icon = Icons.Default.Description,
                         title = stringResource(R.string.about_app_button),
@@ -189,7 +197,6 @@ fun SettingsScreen(
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
 
-                    // GitHub / Source Code
                     val githubUrl = stringResource(R.string.github_url)
                     SettingsItem(
                         icon = Icons.Default.Code,
@@ -199,7 +206,6 @@ fun SettingsScreen(
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
 
-                    // Email / Contact
                     val emailAddress = stringResource(R.string.contact_email)
                     SettingsItem(
                         icon = Icons.Default.Email,
@@ -209,12 +215,11 @@ fun SettingsScreen(
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
 
-                    // Version
                     SettingsItem(
                         icon = Icons.Default.Info,
                         title = stringResource(R.string.version_title),
                         subtitle = stringResource(R.string.version_subtitle),
-                        onClick = { /* No action */ }
+                        onClick = { }
                     )
                 }
 
@@ -229,8 +234,6 @@ fun SettingsScreen(
             }
         }
     }
-
-    // --- DIALOGS ---
 
     if (showResolutionDialog) {
         ResolutionSelectionDialog(
@@ -255,16 +258,23 @@ fun SettingsScreen(
         )
     }
 
+    if (showCameraIpDialog) {
+        CameraIpDialog(
+            initialIp = settings.cameraIp,
+            onSave = { ip ->
+                viewModel.updateCameraIp(ip)
+                showCameraIpDialog = false
+            },
+            onDismiss = { showCameraIpDialog = false }
+        )
+    }
+
     if (showAboutDialog) {
         AboutDialog(
             onDismiss = { showAboutDialog = false }
         )
     }
 }
-
-// ============================================================================
-// HELPERS
-// ============================================================================
 
 private fun openUrl(context: Context, url: String) {
     try {
@@ -279,7 +289,10 @@ private fun sendEmail(context: Context, email: String) {
     try {
         val intent = Intent(Intent.ACTION_SENDTO).apply {
             data = Uri.parse("mailto:$email")
-            putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.email_subject_opendash_inquiry)) // Replaced hardcoded string
+            putExtra(
+                Intent.EXTRA_SUBJECT,
+                context.getString(R.string.email_subject_opendash_inquiry)
+            )
         }
         context.startActivity(intent)
     } catch (e: Exception) {
@@ -287,16 +300,12 @@ private fun sendEmail(context: Context, email: String) {
     }
 }
 
-// ============================================================================
-// COMPONENTS
-// ============================================================================
-
 @Composable
 fun SectionHeader(text: String) {
     Text(
         text = text.uppercase(),
         style = MaterialTheme.typography.labelMedium,
-        color = Color(0xFF00E676), // Neon Green Accent
+        color = Color(0xFF00E676),
         fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
     )
@@ -404,12 +413,12 @@ fun SwitchItem(
     }
 }
 
-// ============================================================================
-// CUSTOM DIALOGS
-// ============================================================================
-
 @Composable
-fun ResolutionSelectionDialog(current: String, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+fun ResolutionSelectionDialog(
+    current: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
     val options = listOf(
         stringResource(R.string.settings_resolution_4k_30fps),
         stringResource(R.string.settings_resolution_2k_60fps),
@@ -438,14 +447,24 @@ fun ResolutionSelectionDialog(current: String, onSelect: (String) -> Unit, onDis
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_cancel_button)) } }
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.dialog_cancel_button))
+            }
+        }
     )
 }
 
 @Composable
-fun WifiEditDialog(initialSsid: String, initialPass: String, onSave: (String, String) -> Unit, onDismiss: () -> Unit) {
-    var ssid by remember { mutableStateOf(initialSsid) }
-    var pass by remember { mutableStateOf(initialPass) }
+fun WifiEditDialog(
+    initialSsid: String,
+    initialPass: String,
+    onSave: (String, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var ssid by rememberSaveable { mutableStateOf(initialSsid) }
+    var pass by rememberSaveable { mutableStateOf(initialPass) }
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -456,24 +475,90 @@ fun WifiEditDialog(initialSsid: String, initialPass: String, onSave: (String, St
                     value = ssid,
                     onValueChange = { ssid = it },
                     label = { Text(stringResource(R.string.settings_dialog_ssid_name_label)) },
-                    singleLine = true
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = pass,
                     onValueChange = { pass = it },
                     label = { Text(stringResource(R.string.settings_dialog_password_label)) },
-                    singleLine = true
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = if (passwordVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(
+                                imageVector = if (passwordVisible) {
+                                    Icons.Default.VisibilityOff
+                                } else {
+                                    Icons.Default.Visibility
+                                },
+                                contentDescription = if (passwordVisible) {
+                                    "Hide password"
+                                } else {
+                                    "Show password"
+                                }
+                            )
+                        }
+                    }
                 )
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(ssid, pass) }) {
+            Button(onClick = { onSave(ssid.trim(), pass) }) {
                 Text(stringResource(R.string.dialog_save_button))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_cancel_button)) }
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.dialog_cancel_button))
+            }
+        }
+    )
+}
+
+@Composable
+fun CameraIpDialog(
+    initialIp: String,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var ip by rememberSaveable { mutableStateOf(initialIp) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Camera IP / Gateway IP") },
+        text = {
+            Column {
+                Text(
+                    text = "Leave empty to use auto discovery. Set manually if your camera does not respond on the default gateway.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = ip,
+                    onValueChange = { ip = it },
+                    label = { Text("IP address") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(ip.trim()) }) {
+                Text(stringResource(R.string.dialog_save_button))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.dialog_cancel_button))
+            }
         }
     )
 }
@@ -484,7 +569,6 @@ fun AboutDialog(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.about_app_button)) },
         text = {
-            // Scroll state enables scrolling for long descriptions
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     text = stringResource(R.string.app_description),
