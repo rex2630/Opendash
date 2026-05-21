@@ -207,7 +207,7 @@ class NovatekHiHzProtocol : CameraProtocol {
         val totalBytes = totalMb?.times(1024L * 1024L) ?: return@withContext null
         val freeBytes = freeMb?.times(1024L * 1024L) ?: return@withContext null
 
-        StorageInfo(
+        return@withContext StorageInfo(
             totalBytes = totalBytes,
             freeBytes = freeBytes
         )
@@ -231,6 +231,7 @@ class NovatekHiHzProtocol : CameraProtocol {
     suspend fun getDeviceStatus(): DeviceStatus = withContext(Dispatchers.IO) {
         val recordingResponse = sendCgiCommand("action=get&property=Camera.Record.Status")
             ?: sendCgiCommand("action=get&property=Camera.Menu.Record")
+
         val sdResponse = sendCgiCommand("action=get&property=Camera.System.Misc.SDCard")
             ?: sendCgiCommand("action=get&property=Camera.Menu.StorageInfo")
 
@@ -243,7 +244,7 @@ class NovatekHiHzProtocol : CameraProtocol {
             sdResponse?.contains("insert", ignoreCase = true) == true ||
             sdResponse?.contains("mounted", ignoreCase = true) == true
 
-        DeviceStatus(
+        return@withContext DeviceStatus(
             isRecording = isRecording,
             hasSdCard = hasSdCard
         )
@@ -309,7 +310,7 @@ class NovatekHiHzProtocol : CameraProtocol {
         return result.contains("ok", ignoreCase = true) ||
             result.contains("success", ignoreCase = true) ||
             result.contains("200") ||
-            result.contains("error", ignoreCase = true).not()
+            !result.contains("error", ignoreCase = true)
     }
 
     private fun parseFileList(raw: String): List<VideoFile> {
@@ -349,7 +350,7 @@ class NovatekHiHzProtocol : CameraProtocol {
             )
         }
 
-        return results.distinctBy { it.name }
+        return results.distinctBy { it.filename }
     }
 
     private fun formatBytes(bytes: Long): String {
