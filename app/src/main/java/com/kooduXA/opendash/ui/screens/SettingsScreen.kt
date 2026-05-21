@@ -156,8 +156,10 @@ fun SettingsScreen(
 
                     SettingsItem(
                         icon = Icons.Default.Language,
-                        title = "Camera IP / Gateway IP",
-                        subtitle = settings.cameraIp.ifBlank { "Auto detect (recommended)" },
+                        title = stringResource(R.string.settings_camera_ip_title),
+                        subtitle = settings.cameraIp.ifBlank {
+                            stringResource(R.string.settings_camera_ip_auto)
+                        },
                         onClick = { showCameraIpDialog = true }
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
@@ -440,7 +442,7 @@ fun ResolutionSelectionDialog(
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(selected = (option == current), onClick = null)
+                        RadioButton(selected = option == current, onClick = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(option)
                     }
@@ -499,9 +501,9 @@ fun WifiEditDialog(
                                     Icons.Default.Visibility
                                 },
                                 contentDescription = if (passwordVisible) {
-                                    "Hide password"
+                                    stringResource(R.string.settings_hide_password)
                                 } else {
-                                    "Show password"
+                                    stringResource(R.string.settings_show_password)
                                 }
                             )
                         }
@@ -532,11 +534,11 @@ fun CameraIpDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Camera IP / Gateway IP") },
+        title = { Text(stringResource(R.string.settings_camera_ip_title)) },
         text = {
             Column {
                 Text(
-                    text = "Leave empty to use auto discovery. Set manually if your camera does not respond on the default gateway.",
+                    text = stringResource(R.string.settings_camera_ip_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
@@ -544,7 +546,7 @@ fun CameraIpDialog(
                 OutlinedTextField(
                     value = ip,
                     onValueChange = { ip = it },
-                    label = { Text("IP address") },
+                    label = { Text(stringResource(R.string.settings_camera_ip_hint)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
