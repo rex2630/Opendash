@@ -1,5 +1,9 @@
 package com.kooduXA.opendash.data.protocol
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.NetworkCapabilities
 import android.util.Log
 import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.StorageInfo
@@ -17,12 +21,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.Inet4Address
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
-class NovatekHiHzProtocol : CameraProtocol {
+class NovatekHiHzProtocol(
+    private val context: Context
+) : CameraProtocol {
 
     private var cameraIp: String = "192.168.0.1"
+    private var baseCgiUrl: String = "http://192.168.0.1/cgi-bin/Config.cgi"
+    private var liveRtspUrl: String? = null
 
     private val _connectionState = MutableStateFlow<CameraState>(CameraState.Disconnected)
     override val connectionState: StateFlow<CameraState> = _connectionState.asStateFlow()
@@ -31,71 +44,71 @@ class NovatekHiHzProtocol : CameraProtocol {
     private var heartbeatJob: Job? = null
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .writeTimeout(5, TimeUnit.SECONDS)
-        .callTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
+        .writeTimeout(3, TimeUnit.SECONDS)
+        .callTimeout(5, TimeUnit.SECONDS)
         .build()
 
+    private val cgiPaths = listOf(
+        "/cgi-bin/Config.cgi",
+        "/cgi-bin/config.cgi",
+        "/app/HttpAPI.asp"
+    )
+
+    private val probeQueries = listOf(
+        "action=get&property=Camera.Menu.VideoRes",
+        "action=get&property=Camera.Preview.RTSP.av",
+        "action=get&property=Camera.System.Power",
+        "action=dir&property=Normal&format=all&count=1&from=0"
+    )
+
     override suspend fun connect(ipAddress: String): Boolean = withContext(Dispatchers.IO) {
-        cameraIp = ipAddress.trim().ifBlank { "192.168.0.1" }
-        _connectionState.value = CameraState.Connecting
-        Log.d(TAG, "Trying Novatek connection on $cameraIp")
+        heartbeatJob?.cancel()
+        liveRtspUrl = null
 
-        val probes = listOf(
-            "action=get&property=Camera.Menu.VideoRes",
-            "action=get&property=Camera.Preview.RTSP.av",
-            "action=get&property=Camera.System.Power",
-            "action=dir&property=Normal&format=all&count=1&from=0"
-        )
+        val manualIp = ipAddress.trim()
+        val ipCandidates = buildIpCandidates(manualIp)
 
-        for (probe in probes) {
-            val response = sendCgiCommand(probe)
-            if (!response.isNullOrBlank()) {
-                Log.d(TAG, "Handshake success on $cameraIp via probe: $probe -> $response")
+        _connectionState.value = if (manualIp.isBlank()) {
+            CameraState.Scanning
+        } else {
+            CameraState.Connecting
+        }
+
+        Log.d(TAG, "Starting discovery. Candidates: $ipCandidates")
+
+        for (candidateIp in ipCandidates) {
+            _connectionState.value = CameraState.Connecting
+            Log.d(TAG, "Trying camera IP: $candidateIp")
+
+            val discoveredBase = discoverWorkingBaseUrl(candidateIp)
+            if (discoveredBase != null) {
+                cameraIp = candidateIp
+                baseCgiUrl = discoveredBase
+
+                Log.d(TAG, "Handshake success. cameraIp=$cameraIp, baseCgiUrl=$baseCgiUrl")
+
+                liveRtspUrl = discoverRtspUrl()
+                Log.d(TAG, "Discovered RTSP URL: $liveRtspUrl")
+
                 _connectionState.value = CameraState.Connected
                 startHeartbeat()
                 return@withContext true
             }
         }
 
-        Log.w(TAG, "Handshake failed on $cameraIp")
-        _connectionState.value = CameraState.Error("Handshake failed on $cameraIp")
+        Log.w(TAG, "No compatible camera endpoint found")
+        _connectionState.value = CameraState.Error("Camera discovery failed")
         false
     }
 
     override suspend fun getLiveStreamUrl(): String = withContext(Dispatchers.IO) {
-        val avResponse = sendCgiCommand("action=get&property=Camera.Preview.RTSP.av")
-        Log.d(TAG, "RTSP AV response: $avResponse")
+        if (liveRtspUrl.isNullOrBlank()) {
+            liveRtspUrl = discoverRtspUrl()
+        }
 
-        val avValue = avResponse
-            ?.substringAfter("av=", "")
-            ?.substringBefore("\n")
-            ?.trim()
-            ?.toIntOrNull()
-
-        val candidatePaths = buildList {
-            when (avValue) {
-                1 -> add("av1")
-                2 -> add("v1")
-                3 -> add("av2")
-                4 -> add("av4")
-                5 -> add("av5")
-                else -> {
-                    add("av4")
-                    add("av2")
-                    add("av1")
-                    add("v1")
-                }
-            }
-            add("live")
-            add("stream0")
-        }.distinct()
-
-        val selectedPath = candidatePaths.first()
-        Log.d(TAG, "Using RTSP path '$selectedPath' on $cameraIp")
-
-        "rtsp://$cameraIp/liveRTSP/$selectedPath"
+        liveRtspUrl ?: "rtsp://$cameraIp/liveRTSP/av4"
     }
 
     override suspend fun startHeartbeat() = withContext(Dispatchers.IO) {
@@ -105,6 +118,8 @@ class NovatekHiHzProtocol : CameraProtocol {
             while (isActive) {
                 try {
                     val response = sendCgiCommand("action=get&property=Camera.System.Power")
+                        ?: sendCgiCommand("action=get&property=Camera.Menu.VideoRes")
+
                     if (response.isNullOrBlank()) {
                         Log.w(TAG, "Heartbeat failed for $cameraIp")
                         _connectionState.value = CameraState.Error("Heartbeat failed")
@@ -155,6 +170,7 @@ class NovatekHiHzProtocol : CameraProtocol {
     override fun disconnect() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        liveRtspUrl = null
         _connectionState.value = CameraState.Disconnected
         Log.d(TAG, "Disconnect called for $cameraIp")
     }
@@ -207,7 +223,7 @@ class NovatekHiHzProtocol : CameraProtocol {
         val totalBytes = totalMb?.times(1024L * 1024L) ?: return@withContext null
         val freeBytes = freeMb?.times(1024L * 1024L) ?: return@withContext null
 
-        return@withContext StorageInfo(
+        StorageInfo(
             totalBytes = totalBytes,
             freeBytes = freeBytes
         )
@@ -244,7 +260,7 @@ class NovatekHiHzProtocol : CameraProtocol {
             sdResponse?.contains("insert", ignoreCase = true) == true ||
             sdResponse?.contains("mounted", ignoreCase = true) == true
 
-        return@withContext DeviceStatus(
+        DeviceStatus(
             isRecording = isRecording,
             hasSdCard = hasSdCard
         )
@@ -268,8 +284,78 @@ class NovatekHiHzProtocol : CameraProtocol {
         isSuccess(ssidResult) && isSuccess(passResult)
     }
 
+    private suspend fun discoverWorkingBaseUrl(ip: String): String? {
+        for (cgiPath in cgiPaths) {
+            val candidateBase = "http://$ip$cgiPath"
+
+            for (probe in probeQueries) {
+                val response = sendCgiCommandToBase(candidateBase, probe)
+                if (!response.isNullOrBlank()) {
+                    Log.d(TAG, "Probe success: base=$candidateBase, probe=$probe, response=$response")
+                    return candidateBase
+                }
+            }
+        }
+
+        return null
+    }
+
+    private suspend fun discoverRtspUrl(): String? = withContext(Dispatchers.IO) {
+        val avResponse = sendCgiCommand("action=get&property=Camera.Preview.RTSP.av")
+        Log.d(TAG, "RTSP AV response: $avResponse")
+
+        val avValue = avResponse
+            ?.substringAfter("av=", "")
+            ?.substringBefore("\n")
+            ?.trim()
+            ?.toIntOrNull()
+
+        val pathCandidates = buildList {
+            when (avValue) {
+                1 -> add("liveRTSP/av1")
+                2 -> add("liveRTSP/v1")
+                3 -> add("liveRTSP/av2")
+                4 -> add("liveRTSP/av4")
+                5 -> add("liveRTSP/av5")
+                else -> {
+                    add("liveRTSP/av4")
+                    add("liveRTSP/av2")
+                    add("liveRTSP/av1")
+                    add("liveRTSP/v1")
+                }
+            }
+
+            add("liveRTSP/live")
+            add("liveRTSP/stream0")
+            add("live")
+            add("stream0")
+            add("livestream/12")
+        }.distinct()
+
+        for (path in pathCandidates) {
+            val url = "rtsp://$cameraIp/$path"
+            if (isRtspReachable(cameraIp, 554, path)) {
+                Log.d(TAG, "RTSP verified: $url")
+                return@withContext url
+            } else {
+                Log.d(TAG, "RTSP failed: $url")
+            }
+        }
+
+        null
+    }
+
     private fun sendCgiCommand(query: String, returnCode: Boolean = false): String? {
-        val url = "http://$cameraIp/cgi-bin/Config.cgi?$query"
+        return sendCgiCommandToBase(baseCgiUrl, query, returnCode)
+    }
+
+    private fun sendCgiCommandToBase(
+        baseUrl: String,
+        query: String,
+        returnCode: Boolean = false
+    ): String? {
+        val url = "$baseUrl?$query"
+
         return try {
             val request = Request.Builder()
                 .url(url)
@@ -291,6 +377,76 @@ class NovatekHiHzProtocol : CameraProtocol {
         } catch (e: Exception) {
             Log.e(TAG, "CGI request failed: $url", e)
             null
+        }
+    }
+
+    private fun buildIpCandidates(manualIp: String): List<String> {
+        val result = linkedSetOf<String>()
+
+        if (manualIp.isNotBlank()) {
+            result += manualIp
+        }
+
+        getWifiGatewayIp()?.let { result += it }
+
+        result += listOf(
+            "192.168.0.1",
+            "192.168.1.1",
+            "192.168.42.1",
+            "192.168.10.1"
+        )
+
+        return result.toList()
+    }
+
+    private fun getWifiGatewayIp(): String? {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val activeNetwork = cm.activeNetwork ?: return null
+            val capabilities = cm.getNetworkCapabilities(activeNetwork) ?: return null
+
+            if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                return null
+            }
+
+            val linkProperties: LinkProperties = cm.getLinkProperties(activeNetwork) ?: return null
+            val route = linkProperties.routes.firstOrNull {
+                it.isDefaultRoute && it.gateway is Inet4Address
+            }
+
+            route?.gateway?.hostAddress
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read Wi-Fi gateway", e)
+            null
+        }
+    }
+
+    private fun isRtspReachable(host: String, port: Int, path: String): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host, port), 1500)
+                socket.soTimeout = 1500
+
+                val writer = socket.getOutputStream().bufferedWriter()
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+
+                writer.write(
+                    "DESCRIBE rtsp://$host/$path RTSP/1.0\r\n" +
+                        "CSeq: 1\r\n" +
+                        "User-Agent: Opendash\r\n" +
+                        "\r\n"
+                )
+                writer.flush()
+
+                val firstLine = reader.readLine()
+                Log.d(TAG, "RTSP probe first line for $path: $firstLine")
+
+                firstLine?.contains("RTSP/1.0 200", ignoreCase = true) == true ||
+                    firstLine?.contains("RTSP/1.0 401", ignoreCase = true) == true ||
+                    firstLine?.contains("RTSP/1.0 454", ignoreCase = true) == true
+            }
+        } catch (e: Exception) {
+            false
         }
     }
 
