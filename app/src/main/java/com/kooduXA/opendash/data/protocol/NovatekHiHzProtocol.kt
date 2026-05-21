@@ -1,8 +1,19 @@
 package com.kooduXA.opendash.data.protocol
 
 import android.util.Log
+import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.StorageInfo
 import com.kooduXA.opendash.domain.model.VideoFile
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
@@ -12,6 +23,12 @@ class NovatekHiHzProtocol : CameraProtocol {
 
     private var cameraIp: String = "192.168.0.1"
 
+    private val _connectionState = MutableStateFlow<CameraState>(CameraState.Disconnected)
+    override val connectionState: StateFlow<CameraState> = _connectionState.asStateFlow()
+
+    private val protocolScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var heartbeatJob: Job? = null
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
@@ -19,8 +36,9 @@ class NovatekHiHzProtocol : CameraProtocol {
         .callTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    override suspend fun connect(ipAddress: String): Boolean {
+    override suspend fun connect(ipAddress: String): Boolean = withContext(Dispatchers.IO) {
         cameraIp = ipAddress.trim().ifBlank { "192.168.0.1" }
+        _connectionState.value = CameraState.Connecting
         Log.d(TAG, "Trying Novatek connection on $cameraIp")
 
         val probes = listOf(
@@ -34,19 +52,18 @@ class NovatekHiHzProtocol : CameraProtocol {
             val response = sendCgiCommand(probe)
             if (!response.isNullOrBlank()) {
                 Log.d(TAG, "Handshake success on $cameraIp via probe: $probe -> $response")
-                return true
+                _connectionState.value = CameraState.Connected
+                startHeartbeat()
+                return@withContext true
             }
         }
 
         Log.w(TAG, "Handshake failed on $cameraIp")
-        return false
+        _connectionState.value = CameraState.Error("Handshake failed on $cameraIp")
+        false
     }
 
-    override fun disconnect() {
-        Log.d(TAG, "Disconnect called for $cameraIp")
-    }
-
-    override suspend fun getLiveStreamUrl(): String {
+    override suspend fun getLiveStreamUrl(): String = withContext(Dispatchers.IO) {
         val avResponse = sendCgiCommand("action=get&property=Camera.Preview.RTSP.av")
         Log.d(TAG, "RTSP AV response: $avResponse")
 
@@ -77,19 +94,79 @@ class NovatekHiHzProtocol : CameraProtocol {
         val selectedPath = candidatePaths.first()
         Log.d(TAG, "Using RTSP path '$selectedPath' on $cameraIp")
 
-        return "rtsp://$cameraIp/liveRTSP/$selectedPath"
+        "rtsp://$cameraIp/liveRTSP/$selectedPath"
     }
 
-    override suspend fun getFileList(): List<VideoFile> {
+    override suspend fun startHeartbeat() = withContext(Dispatchers.IO) {
+        heartbeatJob?.cancel()
+
+        heartbeatJob = protocolScope.launch {
+            while (isActive) {
+                try {
+                    val response = sendCgiCommand("action=get&property=Camera.System.Power")
+                    if (response.isNullOrBlank()) {
+                        Log.w(TAG, "Heartbeat failed for $cameraIp")
+                        _connectionState.value = CameraState.Error("Heartbeat failed")
+                        break
+                    } else {
+                        if (_connectionState.value !is CameraState.Connected) {
+                            _connectionState.value = CameraState.Connected
+                        }
+                        Log.d(TAG, "Heartbeat OK: $response")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Heartbeat exception", e)
+                    _connectionState.value = CameraState.Error(
+                        e.message ?: "Heartbeat failed"
+                    )
+                    break
+                }
+
+                delay(3_000)
+            }
+        }
+    }
+
+    override suspend fun startRecording(): Boolean = withContext(Dispatchers.IO) {
+        val result = sendCgiCommand("action=set&property=Camera.Record.Start&value=1")
+            ?: sendCgiCommand("action=command&property=VideoRecord&value=start")
+
+        Log.d(TAG, "Start recording result: $result")
+        isSuccess(result)
+    }
+
+    override suspend fun stopRecording(): Boolean = withContext(Dispatchers.IO) {
+        val result = sendCgiCommand("action=set&property=Camera.Record.Stop&value=1")
+            ?: sendCgiCommand("action=command&property=VideoRecord&value=stop")
+
+        Log.d(TAG, "Stop recording result: $result")
+        isSuccess(result)
+    }
+
+    override suspend fun takePhoto(): Boolean = withContext(Dispatchers.IO) {
+        val result = sendCgiCommand("action=set&property=Camera.Capture.Start&value=1")
+            ?: sendCgiCommand("action=command&property=StillCapture&value=1")
+
+        Log.d(TAG, "Take photo result: $result")
+        isSuccess(result)
+    }
+
+    override fun disconnect() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        _connectionState.value = CameraState.Disconnected
+        Log.d(TAG, "Disconnect called for $cameraIp")
+    }
+
+    override suspend fun getFileList(): List<VideoFile> = withContext(Dispatchers.IO) {
         val response = sendCgiCommand("action=dir&property=Normal&format=all&count=999&from=0")
-            ?: return emptyList()
+            ?: return@withContext emptyList()
 
         Log.d(TAG, "File list raw response: $response")
-
-        return parseFileList(response)
+        parseFileList(response)
     }
 
-    override suspend fun deleteFile(filename: String): Boolean {
+    override suspend fun deleteFile(filename: String): Boolean = withContext(Dispatchers.IO) {
         var finalPath = filename.trim()
 
         if (finalPath.startsWith("http://") || finalPath.startsWith("https://")) {
@@ -104,13 +181,13 @@ class NovatekHiHzProtocol : CameraProtocol {
         Log.d(TAG, "Delete path transformed to: $finalPath")
 
         val result = sendCgiCommand("action=del&property=$finalPath")
-        return isSuccess(result)
+        isSuccess(result)
     }
 
-    override suspend fun getStorageInfo(): StorageInfo? {
+    override suspend fun getStorageInfo(): StorageInfo? = withContext(Dispatchers.IO) {
         val response = sendCgiCommand("action=get&property=Camera.Menu.StorageInfo")
             ?: sendCgiCommand("action=get&property=Camera.System.Misc.SDCard")
-            ?: return null
+            ?: return@withContext null
 
         Log.d(TAG, "Storage info response: $response")
 
@@ -128,28 +205,29 @@ class NovatekHiHzProtocol : CameraProtocol {
 
         val usedMb = if (totalMb != null && freeMb != null) totalMb - freeMb else null
 
-        return StorageInfo(
+        StorageInfo(
             total = totalMb?.let { "${it}MB" } ?: "Unknown",
             used = usedMb?.let { "${it}MB" } ?: "Unknown",
             free = freeMb?.let { "${it}MB" } ?: "Unknown"
         )
     }
 
-    override suspend fun formatSdCard(): Boolean {
+    override suspend fun formatSdCard(): Boolean = withContext(Dispatchers.IO) {
         val result = sendCgiCommand("action=set&property=Camera.Menu.Format&value=1")
             ?: sendCgiCommand("action=format")
+
         Log.d(TAG, "Format SD result: $result")
-        return isSuccess(result)
+        isSuccess(result)
     }
 
-    suspend fun setAudioRecording(enabled: Boolean): Boolean {
+    suspend fun setAudioRecording(enabled: Boolean): Boolean = withContext(Dispatchers.IO) {
         val value = if (enabled) "1" else "0"
         val result = sendCgiCommand("action=set&property=Camera.Menu.AudioRec&value=$value")
         Log.d(TAG, "Set audio recording result: $result")
-        return isSuccess(result)
+        isSuccess(result)
     }
 
-    suspend fun getDeviceStatus(): DeviceStatus {
+    suspend fun getDeviceStatus(): DeviceStatus = withContext(Dispatchers.IO) {
         val recordingResponse = sendCgiCommand("action=get&property=Camera.Record.Status")
             ?: sendCgiCommand("action=get&property=Camera.Menu.Record")
         val sdResponse = sendCgiCommand("action=get&property=Camera.System.Misc.SDCard")
@@ -164,13 +242,13 @@ class NovatekHiHzProtocol : CameraProtocol {
             sdResponse?.contains("insert", ignoreCase = true) == true ||
             sdResponse?.contains("mounted", ignoreCase = true) == true
 
-        return DeviceStatus(
+        DeviceStatus(
             isRecording = isRecording,
             hasSdCard = hasSdCard
         )
     }
 
-    suspend fun setWifiCredentials(ssid: String, pass: String): Boolean {
+    suspend fun setWifiCredentials(ssid: String, pass: String): Boolean = withContext(Dispatchers.IO) {
         val encodedSsid = URLEncoder.encode(ssid, "UTF-8")
         val encodedPass = URLEncoder.encode(pass, "UTF-8")
 
@@ -185,7 +263,7 @@ class NovatekHiHzProtocol : CameraProtocol {
         Log.d(TAG, "Set Wi-Fi SSID result: $ssidResult")
         Log.d(TAG, "Set Wi-Fi password result: $passResult")
 
-        return isSuccess(ssidResult) && isSuccess(passResult)
+        isSuccess(ssidResult) && isSuccess(passResult)
     }
 
     private fun sendCgiCommand(query: String, returnCode: Boolean = false): String? {
@@ -230,7 +308,7 @@ class NovatekHiHzProtocol : CameraProtocol {
         return result.contains("ok", ignoreCase = true) ||
             result.contains("success", ignoreCase = true) ||
             result.contains("200") ||
-            result.contains("value=0").not()
+            result.contains("error", ignoreCase = true).not()
     }
 
     private fun parseFileList(raw: String): List<VideoFile> {
