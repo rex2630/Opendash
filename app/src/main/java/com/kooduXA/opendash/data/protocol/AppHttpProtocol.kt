@@ -1,7 +1,7 @@
 package com.kooduXA.opendash.data.protocol
 
 import android.content.Context
-import com.kooduXA.opendash.data.debug.DebugLogStore
+import com.kooduXA.opendash.data.debug.AppLogger
 import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.StorageInfo
 import com.kooduXA.opendash.domain.model.VideoFile
@@ -64,7 +64,7 @@ class AppHttpProtocol(
         val ip = ipAddress.trim()
         val discovered = discoverWorkingBasePath(ip)
 
-        DebugLogStore.d(TAG, "canHandle ip=$ip -> basePath=${discovered?.joinToString("/")}")
+        AppLogger.d(TAG, "canHandle ip=$ip -> basePath=${discovered?.joinToString("/")}")
 
         discovered != null
     }
@@ -74,11 +74,11 @@ class AppHttpProtocol(
 
         cameraIp = ipAddress.trim()
         _connectionState.value = CameraState.Connecting
-        DebugLogStore.i(TAG, "Connecting to camera at $cameraIp")
+        AppLogger.i(TAG, "Connecting to camera at $cameraIp")
 
         val discoveredBasePath = discoverWorkingBasePath(cameraIp)
         if (discoveredBasePath == null) {
-            DebugLogStore.e(TAG, "APP API handshake failed on $cameraIp")
+            AppLogger.e(TAG, "APP API handshake failed on $cameraIp")
             _connectionState.value = CameraState.Error("APP API handshake failed on $cameraIp")
             return@withContext false
         }
@@ -93,24 +93,24 @@ class AppHttpProtocol(
         val enterRecorder = sendAppCommand("enterrecorder")
         val timeSync = syncTime()
 
-        DebugLogStore.d(TAG, "Connected APP basePath=${appBasePath.joinToString("/")}")
-        DebugLogStore.d(TAG, "getdeviceattr=$attr")
-        DebugLogStore.d(TAG, "getparamitems=$items")
-        DebugLogStore.d(TAG, "getparamvalue(rec)=$rec")
-        DebugLogStore.d(TAG, "getsdinfo=$sd")
-        DebugLogStore.d(TAG, "getmediainfo=$media")
-        DebugLogStore.d(TAG, "enterrecorder=$enterRecorder")
-        DebugLogStore.d(TAG, "setsystime=$timeSync")
+        AppLogger.d(TAG, "Connected APP basePath=${appBasePath.joinToString("/")}")
+        AppLogger.d(TAG, "getdeviceattr=$attr")
+        AppLogger.d(TAG, "getparamitems=$items")
+        AppLogger.d(TAG, "getparamvalue(rec)=$rec")
+        AppLogger.d(TAG, "getsdinfo=$sd")
+        AppLogger.d(TAG, "getmediainfo=$media")
+        AppLogger.d(TAG, "enterrecorder=$enterRecorder")
+        AppLogger.d(TAG, "setsystime=$timeSync")
 
         val success = listOf(attr, items, rec, sd, media, enterRecorder).any { !it.isNullOrBlank() }
         if (!success) {
-            DebugLogStore.e(TAG, "APP API handshake returned no usable data for $cameraIp")
+            AppLogger.e(TAG, "APP API handshake returned no usable data for $cameraIp")
             _connectionState.value = CameraState.Error("APP API handshake failed on $cameraIp")
             return@withContext false
         }
 
         _connectionState.value = CameraState.Connected
-        DebugLogStore.i(TAG, "Camera connected")
+        AppLogger.i(TAG, "Camera connected")
         startHeartbeat()
         true
     }
@@ -131,7 +131,7 @@ class AppHttpProtocol(
         heartbeatJob?.cancel()
 
         heartbeatJob = protocolScope.launch {
-            DebugLogStore.d(TAG, "Heartbeat started")
+            AppLogger.d(TAG, "Heartbeat started")
 
             while (isActive) {
                 try {
@@ -140,15 +140,15 @@ class AppHttpProtocol(
                         ?: sendAppCommand("getsdinfo")
 
                     if (response.isNullOrBlank()) {
-                        DebugLogStore.e(TAG, "Heartbeat failed: empty response")
+                        AppLogger.e(TAG, "Heartbeat failed: empty response")
                         _connectionState.value = CameraState.Error("Heartbeat failed")
                         break
                     } else if (_connectionState.value !is CameraState.Connected) {
-                        DebugLogStore.i(TAG, "Heartbeat restored connection state")
+                        AppLogger.i(TAG, "Heartbeat restored connection state")
                         _connectionState.value = CameraState.Connected
                     }
                 } catch (e: Exception) {
-                    DebugLogStore.e(TAG, "Heartbeat exception", e)
+                    AppLogger.e(TAG, "Heartbeat exception", e)
                     _connectionState.value = CameraState.Error(e.message ?: "Heartbeat failed")
                     break
                 }
@@ -156,7 +156,7 @@ class AppHttpProtocol(
                 delay(3_000)
             }
 
-            DebugLogStore.d(TAG, "Heartbeat stopped")
+            AppLogger.d(TAG, "Heartbeat stopped")
         }
     }
 
@@ -165,7 +165,7 @@ class AppHttpProtocol(
             ?: sendAppCommand("startrecord")
             ?: sendAppCommand("enterrecorder")
 
-        DebugLogStore.d(TAG, "startRecording result=$result")
+        AppLogger.d(TAG, "startRecording result=$result")
         isSuccess(result)
     }
 
@@ -173,7 +173,7 @@ class AppHttpProtocol(
         val result = sendAppCommand("setparamvalue", mapOf("param" to "rec", "value" to "0"))
             ?: sendAppCommand("stoprecord")
 
-        DebugLogStore.d(TAG, "stopRecording result=$result")
+        AppLogger.d(TAG, "stopRecording result=$result")
         isSuccess(result)
     }
 
@@ -181,7 +181,7 @@ class AppHttpProtocol(
         val result = sendAppCommand("capture")
             ?: sendAppCommand("takephoto")
 
-        DebugLogStore.d(TAG, "takePhoto result=$result")
+        AppLogger.d(TAG, "takePhoto result=$result")
         isSuccess(result)
     }
 
@@ -189,13 +189,13 @@ class AppHttpProtocol(
         heartbeatJob?.cancel()
         heartbeatJob = null
         _connectionState.value = CameraState.Disconnected
-        DebugLogStore.i(TAG, "Camera disconnected")
+        AppLogger.i(TAG, "Camera disconnected")
     }
 
     override suspend fun getFileList(): List<VideoFile> = withContext(Dispatchers.IO) {
         val mediaInfo = sendAppCommand("getmediainfo") ?: return@withContext emptyList()
         val files = parseMediaInfo(mediaInfo)
-        DebugLogStore.d(TAG, "getFileList parsed ${files.size} files")
+        AppLogger.d(TAG, "getFileList parsed ${files.size} files")
         files
     }
 
@@ -204,7 +204,7 @@ class AppHttpProtocol(
         val result = sendAppCommand("deletefile", mapOf("name" to cleanName))
             ?: sendAppCommand("delmedia", mapOf("name" to cleanName))
 
-        DebugLogStore.d(TAG, "deleteFile name=$cleanName result=$result")
+        AppLogger.d(TAG, "deleteFile name=$cleanName result=$result")
         isSuccess(result)
     }
 
@@ -221,12 +221,12 @@ class AppHttpProtocol(
         val freeBytes = freeMb?.times(1024L * 1024L)
 
         if (totalBytes == null || freeBytes == null) {
-            DebugLogStore.w(TAG, "getStorageInfo parse failed for response=$response")
+            AppLogger.w(TAG, "getStorageInfo parse failed for response=$response")
             return@withContext null
         }
 
         val info = StorageInfo(totalBytes = totalBytes, freeBytes = freeBytes)
-        DebugLogStore.d(TAG, "getStorageInfo total=$totalBytes free=$freeBytes")
+        AppLogger.d(TAG, "getStorageInfo total=$totalBytes free=$freeBytes")
         info
     }
 
@@ -234,7 +234,7 @@ class AppHttpProtocol(
         val result = sendAppCommand("formatsd")
             ?: sendAppCommand("format")
 
-        DebugLogStore.d(TAG, "formatSdCard result=$result")
+        AppLogger.d(TAG, "formatSdCard result=$result")
         isSuccess(result)
     }
 
@@ -249,7 +249,7 @@ class AppHttpProtocol(
                 sd?.contains("mount", true) == true
         )
 
-        DebugLogStore.d(TAG, "getDeviceStatus rec=$rec sd=$sd status=$status")
+        AppLogger.d(TAG, "getDeviceStatus rec=$rec sd=$sd status=$status")
         status
     }
 
@@ -257,7 +257,7 @@ class AppHttpProtocol(
         val result = sendAppCommand("setwifi", mapOf("ssid" to ssid, "pwd" to pass))
             ?: sendAppCommand("setapinfo", mapOf("ssid" to ssid, "pwd" to pass))
 
-        DebugLogStore.d(TAG, "setWifiCredentials ssid=$ssid result=$result")
+        AppLogger.d(TAG, "setWifiCredentials ssid=$ssid result=$result")
         isSuccess(result)
     }
 
@@ -273,7 +273,7 @@ class AppHttpProtocol(
                     )
                 )
 
-                DebugLogStore.d(
+                AppLogger.d(
                     TAG,
                     "APP probe ip=$ip base=${basePath.joinToString("/")} path=${probe.path} -> ${response?.take(160)}"
                 )
@@ -332,13 +332,13 @@ class AppHttpProtocol(
 
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string()?.trim()
-                DebugLogStore.d(TAG, "GET $url -> code=${response.code}, body=${body?.take(200)}")
+                AppLogger.d(TAG, "GET $url -> code=${response.code}, body=${body?.take(200)}")
 
                 if (!response.isSuccessful) return null
                 body
             }
         } catch (e: Exception) {
-            DebugLogStore.e(TAG, "GET failed: $url", e)
+            AppLogger.e(TAG, "GET failed: $url", e)
             null
         }
     }
