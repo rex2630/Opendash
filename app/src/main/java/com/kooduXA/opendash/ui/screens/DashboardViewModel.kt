@@ -13,14 +13,18 @@ import com.kooduXA.opendash.data.repository.SettingsRepository
 import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.VideoFile
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
-import kotlinx.coroutines.Dispatchers
 
 @HiltViewModel
 @RequiresApi(Build.VERSION_CODES.R)
@@ -29,189 +33,239 @@ class DashboardViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
-    // --- NEW STATES ---
+    private var lastCommandTime: Long = 0L
+    private var recordingStartTimestamp: Long = 0L
+    private var statusPollingJob: Job? = null
 
-    private var lastCommandTime: Long = 0
     private val _isRecording = MutableStateFlow(false)
     val isRecording = _isRecording.asStateFlow()
 
     private val _isAudioEnabled = MutableStateFlow(true)
     val isAudioEnabled = _isAudioEnabled.asStateFlow()
 
-    private val _hasSdCard = MutableStateFlow(true) // Default to true until checked
+    private val _hasSdCard = MutableStateFlow(true)
     val hasSdCard = _hasSdCard.asStateFlow()
 
     private val _dialogState = MutableStateFlow<DialogState>(DialogState.None)
     val dialogState = _dialogState.asStateFlow()
 
-    // Recording Timer
-    private var recordingStartTimestamp: Long = 0
     private val _recordingDuration = MutableStateFlow("00:00")
     val recordingDuration = _recordingDuration.asStateFlow()
 
-
-
-    // UI State
     private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Idle)
     val uiState: StateFlow<DashboardUiState> = _uiState
 
-    // Download State
     private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.Idle)
     val downloadState: StateFlow<DownloadState> = _downloadState
 
-    // Recordings
     private val _recordings = MutableStateFlow<List<VideoFile>>(emptyList())
     val recordings: StateFlow<List<VideoFile>> = _recordings
 
-    // Settings
+    private val _localVideos = MutableStateFlow<List<VideoFile>>(emptyList())
+    val localVideos = _localVideos.asStateFlow()
+
+    private val _debugMessage = MutableStateFlow("Idle")
+    val debugMessage = _debugMessage.asStateFlow()
+
+    private val _lastStreamUrl = MutableStateFlow("")
+    val lastStreamUrl = _lastStreamUrl.asStateFlow()
+
     val settings = settingsRepository.settingsFlow
 
     init {
-        // Observe Connection State
+        observeConnectionState()
+        observeAutoConnectSettings()
+    }
+
+    private fun observeConnectionState() {
         viewModelScope.launch {
             connectionRepository.connectionState.collectLatest { state ->
                 when (state) {
                     is CameraState.Connected -> {
-                        val url = connectionRepository.activeProtocol.value?.getLiveStreamUrl() ?: ""
+                        val url = connectionRepository.activeProtocol.value?.getLiveStreamUrl().orEmpty()
+                        _lastStreamUrl.value = url
+                        _debugMessage.value = "Connected. Stream URL: $url"
                         _uiState.value = DashboardUiState.Streaming(url)
+                        startStatusPolling()
                     }
+
                     is CameraState.Error -> {
+                        _debugMessage.value = "Connection error: ${state.message}"
                         _uiState.value = DashboardUiState.Error(state.message)
+                        stopStatusPolling()
                     }
+
                     is CameraState.Scanning -> {
+                        _debugMessage.value = "Scanning / connecting to camera..."
                         _uiState.value = DashboardUiState.Loading
                     }
+
+                    is CameraState.Connecting -> {
+                        _debugMessage.value = "Connecting..."
+                        _uiState.value = DashboardUiState.Loading
+                    }
+
                     else -> {
+                        _debugMessage.value = "Idle / disconnected"
                         _uiState.value = DashboardUiState.Idle
+                        stopStatusPolling()
                     }
                 }
             }
         }
+    }
 
-        // Auto-connect if enabled
+    private fun observeAutoConnectSettings() {
         viewModelScope.launch {
-            settings.collect { settings ->
-                if (settings.wifiAutoConnect && _uiState.value is DashboardUiState.Idle) {
+            settings.collectLatest { currentSettings ->
+                if (currentSettings.wifiAutoConnect && _uiState.value is DashboardUiState.Idle) {
+                    _debugMessage.value = "Auto-connect enabled, starting discovery..."
                     connect()
                 }
             }
         }
     }
 
-    init {
-        // Start a Status Polling Loop when connected
-        viewModelScope.launch {
-            connectionRepository.connectionState.collectLatest { state ->
-                if (state is CameraState.Connected) {
-                    startStatusPolling()
-                }
-            }
-        }
-    }
-
     private fun startStatusPolling() {
-        viewModelScope.launch {
+        if (statusPollingJob?.isActive == true) return
+
+        statusPollingJob = viewModelScope.launch {
+            _debugMessage.value = "Status polling started"
+
             while (true) {
-                // Fetch status from Protocol
-                val status = connectionRepository.getDeviceStatus()
+                try {
+                    val now = System.currentTimeMillis()
+                    val timeSinceLastCommand = now - lastCommandTime
 
-                _hasSdCard.value = status.hasSdCard
+                    if (timeSinceLastCommand < 3000) {
+                        delay(500)
+                        continue
+                    }
 
-                // Sync Recording State
-                if (status.isRecording && !_isRecording.value) {
-                    _isRecording.value = true
-                    recordingStartTimestamp = System.currentTimeMillis() // Approximate
-                } else if (!status.isRecording && _isRecording.value) {
-                    _isRecording.value = false
+                    val status = connectionRepository.getDeviceStatus()
+
+                    _hasSdCard.value = status.hasSdCard
+
+                    if (status.isRecording && !_isRecording.value) {
+                        _isRecording.value = true
+                        if (recordingStartTimestamp == 0L) {
+                            recordingStartTimestamp = System.currentTimeMillis()
+                        }
+                    } else if (!status.isRecording && _isRecording.value) {
+                        _isRecording.value = false
+                        recordingStartTimestamp = 0L
+                        _recordingDuration.value = "00:00"
+                    }
+
+                    if (_isRecording.value) {
+                        val seconds = (System.currentTimeMillis() - recordingStartTimestamp) / 1000
+                        val minutes = seconds / 60
+                        val remainingSeconds = seconds % 60
+                        _recordingDuration.value = "%02d:%02d".format(minutes, remainingSeconds)
+                    }
+
+                    _debugMessage.value =
+                        "Polling OK | rec=${_isRecording.value}, sd=${_hasSdCard.value}, stream=${_lastStreamUrl.value}"
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Status polling failed", e)
+                    _debugMessage.value = "Status polling failed: ${e.message}"
                 }
 
-                // Update Timer String
-                if (_isRecording.value) {
-                    val seconds = (System.currentTimeMillis() - recordingStartTimestamp) / 1000
-                    val m = seconds / 60
-                    val s = seconds % 60
-                    _recordingDuration.value = "%02d:%02d".format(m, s)
-                }
-
-                delay(2000) // Poll every 2 seconds
+                delay(2000)
             }
         }
     }
 
-
+    private fun stopStatusPolling() {
+        statusPollingJob?.cancel()
+        statusPollingJob = null
+        _recordingDuration.value = if (_isRecording.value) _recordingDuration.value else "00:00"
+    }
 
     fun toggleRecording() {
-        Log.d("DashboardViewModel", "Record Button Clicked! Verifying state first...")
-
-        // 1. SILENCE POLLING LOOP IMMEDIATELY
-        // This prevents the background loop from overwriting your UI while we are thinking.
+        Log.d(TAG, "Record button clicked, verifying state first...")
         lastCommandTime = System.currentTimeMillis()
 
         viewModelScope.launch {
-            // 2. FETCH TRUE STATUS
-            val status = connectionRepository.getDeviceStatus()
-            val cameraIsRecording = status?.isRecording ?: false
-            val appThinksRecording = _isRecording.value
+            try {
+                val status = connectionRepository.getDeviceStatus()
+                val cameraIsRecording = status.isRecording
+                val appThinksRecording = _isRecording.value
 
-            Log.d("DashboardViewModel", "Logic Check -> App: $appThinksRecording | Camera: $cameraIsRecording")
+                Log.d(TAG, "Logic check -> App: $appThinksRecording | Camera: $cameraIsRecording")
+                _debugMessage.value =
+                    "Record toggle | app=$appThinksRecording camera=$cameraIsRecording"
 
-            // 3. DETERMINE INTENT (Smart Logic)
-            if (appThinksRecording) {
-                // APP SAYS RECORDING...
-                if (!cameraIsRecording) {
-                    // But Camera is Stopped? -> Just Sync UI.
-                    Log.d("DashboardViewModel", "Sync Fix: Camera already stopped. Updating UI only.")
-                    _isRecording.value = false
-                    recordingStartTimestamp = 0
-                } else {
-                    // Camera is also Recording -> Send Stop.
-                    Log.d("DashboardViewModel", "Action: Sending STOP command.")
-                    val success = connectionRepository.activeProtocol.value?.stopRecording() ?: false
-                    if (success) {
+                if (appThinksRecording) {
+                    if (!cameraIsRecording) {
+                        Log.d(TAG, "Sync fix: camera already stopped, updating UI only")
                         _isRecording.value = false
-                        recordingStartTimestamp = 0
-                        _dialogState.value = DialogState.Success("Recording Saved")
-                        // Short delay to let user see the message
-                        delay(500)
-                        _dialogState.value = DialogState.None
-                    }
-                }
-            } else {
-                // APP SAYS STOPPED...
-                if (cameraIsRecording) {
-                    // But Camera is Recording? -> Just Sync UI.
-                    Log.d("DashboardViewModel", "Sync Fix: Camera already recording. Updating UI only.")
-                    _isRecording.value = true
-                    if (recordingStartTimestamp == 0L) recordingStartTimestamp = System.currentTimeMillis()
-                } else {
-                    // Camera is also Stopped -> Send Start.
-                    Log.d("DashboardViewModel", "Action: Sending START command.")
-                    val success = connectionRepository.activeProtocol.value?.startRecording() ?: false
-                    if (success) {
-                        _isRecording.value = true
-                        recordingStartTimestamp = System.currentTimeMillis()
-                        _dialogState.value = DialogState.Success("Recording Started")
-                        delay(500)
-                        _dialogState.value = DialogState.None
+                        recordingStartTimestamp = 0L
+                        _recordingDuration.value = "00:00"
                     } else {
-                        _dialogState.value = DialogState.Error("Failed to start recording")
+                        Log.d(TAG, "Action: sending STOP command")
+                        val success = connectionRepository.activeProtocol.value?.stopRecording() ?: false
+                        if (success) {
+                            _isRecording.value = false
+                            recordingStartTimestamp = 0L
+                            _recordingDuration.value = "00:00"
+                            _dialogState.value = DialogState.Success("Recording Saved")
+                            _debugMessage.value = "Recording stopped successfully"
+                            delay(500)
+                            _dialogState.value = DialogState.None
+                        } else {
+                            _dialogState.value = DialogState.Error("Failed to stop recording")
+                            _debugMessage.value = "Failed to stop recording"
+                        }
+                    }
+                } else {
+                    if (cameraIsRecording) {
+                        Log.d(TAG, "Sync fix: camera already recording, updating UI only")
+                        _isRecording.value = true
+                        if (recordingStartTimestamp == 0L) {
+                            recordingStartTimestamp = System.currentTimeMillis()
+                        }
+                    } else {
+                        Log.d(TAG, "Action: sending START command")
+                        val success = connectionRepository.activeProtocol.value?.startRecording() ?: false
+                        if (success) {
+                            _isRecording.value = true
+                            recordingStartTimestamp = System.currentTimeMillis()
+                            _dialogState.value = DialogState.Success("Recording Started")
+                            _debugMessage.value = "Recording started successfully"
+                            delay(500)
+                            _dialogState.value = DialogState.None
+                        } else {
+                            _dialogState.value = DialogState.Error("Failed to start recording")
+                            _debugMessage.value = "Failed to start recording"
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "toggleRecording failed", e)
+                _dialogState.value = DialogState.Error("Recording command failed")
+                _debugMessage.value = "Recording command failed: ${e.message}"
+            } finally {
+                lastCommandTime = System.currentTimeMillis()
             }
-
-            // 4. RESET SILENCE TIMER
-            // Reset the timer NOW so the polling loop stays quiet for another 3 seconds
-            // allowing the camera firmware to fully process the command.
-            lastCommandTime = System.currentTimeMillis()
         }
     }
 
     fun toggleAudio() {
         viewModelScope.launch {
-            val newState = !_isAudioEnabled.value
-            val success = connectionRepository.setAudioRecording(newState)
-            if (success) {
-                _isAudioEnabled.value = newState
+            try {
+                val newState = !_isAudioEnabled.value
+                val success = connectionRepository.setAudioRecording(newState)
+                if (success) {
+                    _isAudioEnabled.value = newState
+                    _debugMessage.value = "Audio recording set to $newState"
+                } else {
+                    _debugMessage.value = "Failed to change audio recording state"
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "toggleAudio failed", e)
+                _debugMessage.value = "Audio toggle failed: ${e.message}"
             }
         }
     }
@@ -220,140 +274,182 @@ class DashboardViewModel @Inject constructor(
         _dialogState.value = DialogState.None
     }
 
-
     @RequiresApi(Build.VERSION_CODES.R)
     fun connect() {
-        connectionRepository.startDiscovery()
+        viewModelScope.launch {
+            _debugMessage.value = "Starting camera discovery..."
+            _uiState.value = DashboardUiState.Loading
+            connectionRepository.startDiscovery()
+        }
     }
 
     fun disconnect() {
+        stopStatusPolling()
+        _debugMessage.value = "Disconnect requested"
         connectionRepository.disconnect()
+        _uiState.value = DashboardUiState.Idle
     }
 
     fun fetchRecordings() {
         viewModelScope.launch {
-            val files = connectionRepository.getRecordings()
-            _recordings.value = files
+            try {
+                _debugMessage.value = "Fetching remote recordings..."
+                val files = connectionRepository.getRecordings()
+                _recordings.value = files
+                _debugMessage.value = "Fetched ${files.size} remote file(s)"
+            } catch (e: Exception) {
+                Log.e(TAG, "fetchRecordings failed", e)
+                _debugMessage.value = "Failed to fetch recordings: ${e.message}"
+            }
         }
     }
 
     fun downloadVideo(file: VideoFile) {
         viewModelScope.launch {
-            _downloadState.value = DownloadState.Downloading(0f)
+            try {
+                _debugMessage.value = "Downloading ${file.filename}..."
+                _downloadState.value = DownloadState.Downloading(0f)
 
-            connectionRepository.downloadFile(file.downloadUrl, file.filename) { progress ->
-                _downloadState.value = DownloadState.Downloading(progress)
+                connectionRepository.downloadFile(file.downloadUrl, file.filename) { progress ->
+                    _downloadState.value = DownloadState.Downloading(progress)
+                }
+
+                _downloadState.value = DownloadState.Success(file.filename)
+                _debugMessage.value = "Download complete: ${file.filename}"
+                delay(3000)
+                _downloadState.value = DownloadState.Idle
+            } catch (e: Exception) {
+                Log.e(TAG, "downloadVideo failed", e)
+                _downloadState.value = DownloadState.Error("Failed to download ${file.filename}")
+                _debugMessage.value = "Download failed: ${e.message}"
             }
-
-            _downloadState.value = DownloadState.Success(file.filename)
-            delay(3000)
-            _downloadState.value = DownloadState.Idle
         }
     }
 
     fun deleteFile(file: VideoFile) {
         viewModelScope.launch {
-            // 1. Show Loading (Optional, usually fast enough to skip)
+            try {
+                _debugMessage.value = "Deleting ${file.filename}..."
+                val success = connectionRepository.activeProtocol.value?.deleteFile(file.filename) ?: false
 
-            // 2. Perform Delete
-            // Remember: The protocol now handles the "$" path logic automatically
-            val success = connectionRepository.activeProtocol.value?.deleteFile(file.filename) ?: false
-
-            if (success) {
-                // 3. Refresh List
-                fetchRecordings()
-
-                // 4. Send Feedback
-                _dialogState.value = DialogState.Success("File deleted successfully")
-
-                // Clear feedback after 2 seconds
-                delay(2000)
-                _dialogState.value = DialogState.None
-            } else {
+                if (success) {
+                    fetchRecordings()
+                    _dialogState.value = DialogState.Success("File deleted successfully")
+                    _debugMessage.value = "Deleted ${file.filename}"
+                    delay(2000)
+                    _dialogState.value = DialogState.None
+                } else {
+                    _dialogState.value = DialogState.Error("Failed to delete file")
+                    _debugMessage.value = "Failed to delete ${file.filename}"
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "deleteFile failed", e)
                 _dialogState.value = DialogState.Error("Failed to delete file")
+                _debugMessage.value = "Delete failed: ${e.message}"
             }
         }
     }
 
     fun takePhoto() {
         viewModelScope.launch {
-            val success = connectionRepository.activeProtocol.value?.takePhoto() ?: false
-            // Handle photo taken feedback
+            try {
+                _debugMessage.value = "Taking photo..."
+                val success = connectionRepository.activeProtocol.value?.takePhoto() ?: false
+                _debugMessage.value = if (success) {
+                    "Photo capture command sent successfully"
+                } else {
+                    "Photo capture command failed"
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "takePhoto failed", e)
+                _debugMessage.value = "Photo capture failed: ${e.message}"
+            }
         }
     }
 
     fun startRecording() {
         viewModelScope.launch {
-            connectionRepository.activeProtocol.value?.startRecording()
+            try {
+                _debugMessage.value = "Manual start recording requested"
+                connectionRepository.activeProtocol.value?.startRecording()
+            } catch (e: Exception) {
+                Log.e(TAG, "startRecording failed", e)
+                _debugMessage.value = "Manual start failed: ${e.message}"
+            }
         }
     }
 
     fun stopRecording() {
         viewModelScope.launch {
-            connectionRepository.activeProtocol.value?.stopRecording()
+            try {
+                _debugMessage.value = "Manual stop recording requested"
+                connectionRepository.activeProtocol.value?.stopRecording()
+            } catch (e: Exception) {
+                Log.e(TAG, "stopRecording failed", e)
+                _debugMessage.value = "Manual stop failed: ${e.message}"
+            }
         }
     }
 
-    private val _localVideos = MutableStateFlow<List<VideoFile>>(emptyList())
-    val localVideos = _localVideos.asStateFlow()
-
     fun loadLocalGallery(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
-            val videoList = mutableListOf<VideoFile>()
+            try {
+                val videoList = mutableListOf<VideoFile>()
 
-            // Query MediaStore for videos
-            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-            } else {
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            }
-
-            val projection = arrayOf(
-                MediaStore.Video.Media._ID,
-                MediaStore.Video.Media.DISPLAY_NAME,
-                MediaStore.Video.Media.DURATION,
-                MediaStore.Video.Media.SIZE,
-                MediaStore.Video.Media.DATE_ADDED
-            )
-
-            // Sort by Date Descending (Newest first)
-            val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
-
-            context.contentResolver.query(
-                collection,
-                projection,
-                null, // Select all (or filter by specific folder if needed)
-                null,
-                sortOrder
-            )?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
-                val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
-
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idColumn)
-                    val name = cursor.getString(nameColumn)
-                    val size = cursor.getLong(sizeColumn)
-                    val date = cursor.getLong(dateColumn) * 1000L // Convert to ms
-
-                    val contentUri = ContentUris.withAppendedId(collection, id)
-
-                    // Filter: Only show videos that look like Dashcam files (optional)
-                    // if (name.endsWith(".mp4", true)) {
-                    videoList.add(
-                        VideoFile(
-                            filename = name,
-                            downloadUrl = contentUri.toString(), // Local URI
-                            thumbnailUrl = contentUri.toString(), // Coil loads thumb from URI
-                            size = formatSize(size),
-                            time = formatDate(date)
-                        )
-                    )
-                    // }
+                val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                } else {
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                 }
+
+                val projection = arrayOf(
+                    MediaStore.Video.Media._ID,
+                    MediaStore.Video.Media.DISPLAY_NAME,
+                    MediaStore.Video.Media.DURATION,
+                    MediaStore.Video.Media.SIZE,
+                    MediaStore.Video.Media.DATE_ADDED
+                )
+
+                val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
+
+                context.contentResolver.query(
+                    collection,
+                    projection,
+                    null,
+                    null,
+                    sortOrder
+                )?.use { cursor ->
+                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                    val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
+                    val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
+
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idColumn)
+                        val name = cursor.getString(nameColumn)
+                        val size = cursor.getLong(sizeColumn)
+                        val date = cursor.getLong(dateColumn) * 1000L
+
+                        val contentUri = ContentUris.withAppendedId(collection, id)
+
+                        videoList.add(
+                            VideoFile(
+                                filename = name,
+                                downloadUrl = contentUri.toString(),
+                                thumbnailUrl = contentUri.toString(),
+                                size = formatSize(size),
+                                time = formatDate(date)
+                            )
+                        )
+                    }
+                }
+
+                _localVideos.value = videoList
+                _debugMessage.value = "Loaded ${videoList.size} local video(s)"
+            } catch (e: Exception) {
+                Log.e(TAG, "loadLocalGallery failed", e)
+                _debugMessage.value = "Failed to load local gallery: ${e.message}"
             }
-            _localVideos.value = videoList
         }
     }
 
@@ -363,7 +459,11 @@ class DashboardViewModel @Inject constructor(
     }
 
     private fun formatDate(timestamp: Long): String {
-        return java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
+        return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+    }
+
+    companion object {
+        private const val TAG = "DashboardViewModel"
     }
 }
 
@@ -381,7 +481,6 @@ sealed class DownloadState {
     data class Error(val message: String) : DownloadState()
 }
 
-// UI State for Dialogs
 sealed class DialogState {
     object None : DialogState()
     data class Loading(val message: String) : DialogState()
