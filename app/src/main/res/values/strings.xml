@@ -12,9 +12,9 @@
     <string name="github_repo">GitHub Repository</string>
     <string name="github_subtitle">Contribute to the source code</string>
     <string name="version_title">Version</string>
-    <string name="version_subtitle">v1.0.0 (Beta)</string>
-    <string name="contact_email">contributors@opendash.app</string>
-    <string name="github_url">https://github.com/KooduXA/OpenDash</string>
+    <string name="version_subtitle">v1.0.1</string>
+    <string name="contact_email">contributors@p4g.cz</string>
+    <string name="github_url">https://github.com/rex2630/Opendash/</string>
     <string name="close">Close</string>
     <string name="settings_title">Settings</string>
     <string name="email_subject_opendash_inquiry">OpenDash Inquiry</string>
