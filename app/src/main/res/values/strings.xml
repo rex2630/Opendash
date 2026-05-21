@@ -6,10 +6,7 @@
     <string name="about_section_title">About</string>
     <string name="about_app_button">About OpenDash</string>
     <string name="about_app_button_subtitle">Read full application description</string>
-
-    <!-- This is the large note -->
     <string name="app_description">OpenDash is an open-source dashcam application designed to provide high-quality video recording, loop recording, and seamless connectivity for driver safety.\n\nKey Features:\n• 4K Video Support\n• Auto-Connect via Wi-Fi\n• Loop Recording to save storage\n\nThank you for using our software. We are dedicated to open-source transparency and privacy.</string>
-
     <string name="contact_us">Contact Us</string>
     <string name="contact_subtitle">Report bugs or request features</string>
     <string name="github_repo">GitHub Repository</string>
@@ -20,8 +17,10 @@
     <string name="github_url">https://github.com/KooduXA/OpenDash</string>
     <string name="close">Close</string>
     <string name="settings_title">Settings</string>
+    <string name="email_subject_opendash_inquiry">OpenDash Inquiry</string>
 
     <!-- Dashboard Screen Strings -->
+    <string name="dashboard_title">OpenDash</string>
     <string name="dashboard_retry_button">Retry</string>
     <string name="dashboard_not_connected">Not Connected</string>
     <string name="dashboard_connect_to_camera_button">Connect to Camera</string>
@@ -34,6 +33,58 @@
     <string name="dashboard_status_error">ERR</string>
     <string name="dashboard_status_idle">IDLE</string>
     <string name="dashboard_recording_badge">REC</string>
+
+    <string name="dashboard_refresh">Refresh</string>
+    <string name="dashboard_settings">Settings</string>
+
+    <string name="dashboard_connection_disconnected">Disconnected</string>
+    <string name="dashboard_connection_scanning">Scanning for camera</string>
+    <string name="dashboard_connection_connecting">Connecting to camera</string>
+    <string name="dashboard_connection_connected">Connected</string>
+    <string name="dashboard_connection_error">Connection error</string>
+
+    <string name="dashboard_action_connect">Connect</string>
+    <string name="dashboard_action_scanning">Scanning...</string>
+    <string name="dashboard_action_connecting">Connecting...</string>
+    <string name="dashboard_action_disconnect">Disconnect</string>
+    <string name="dashboard_action_retry">Retry</string>
+
+    <string name="dashboard_status_no_details">No status details</string>
+    <string name="dashboard_status_refreshing">Refreshing camera data...</string>
+
+    <string name="dashboard_section_recordings">Recordings</string>
+    <string name="dashboard_empty_connected">No recordings found on the camera.</string>
+    <string name="dashboard_empty_connecting">Connecting to the camera...</string>
+    <string name="dashboard_empty_scanning">Scanning for available camera...</string>
+    <string name="dashboard_empty_error">Unable to load recordings because the connection failed.</string>
+    <string name="dashboard_empty_disconnected">Connect to the camera to load recordings.</string>
+
+    <string name="dashboard_device_status_title">Device status</string>
+    <string name="dashboard_device_status_recording">Recording</string>
+    <string name="dashboard_device_status_sdcard">SD card</string>
+    <string name="dashboard_device_status_yes">Yes</string>
+    <string name="dashboard_device_status_no">No</string>
+    <string name="dashboard_device_status_present">Present</string>
+    <string name="dashboard_device_status_missing">Missing</string>
+
+    <string name="dashboard_download_file">Download file</string>
+    <string name="dashboard_downloading">Downloading %1$s...</string>
+    <string name="dashboard_download_complete">Download completed: %1$s</string>
+    <string name="dashboard_download_failed">Download failed: %1$s</string>
+
+    <string name="dashboard_debug_camera_connected">Camera connected</string>
+    <string name="dashboard_debug_camera_disconnected">Camera disconnected</string>
+    <string name="dashboard_debug_connecting">Connecting to camera...</string>
+    <string name="dashboard_debug_scanning">Scanning for camera...</string>
+    <string name="dashboard_debug_starting_discovery">Starting discovery...</string>
+    <string name="dashboard_debug_refresh_failed">Refresh failed: %1$s</string>
+    <string name="dashboard_debug_load_recordings_failed">Failed to load recordings: %1$s</string>
+    <string name="dashboard_debug_load_status_failed">Failed to load device status: %1$s</string>
+    <string name="dashboard_debug_audio_enabled">Audio recording enabled</string>
+    <string name="dashboard_debug_audio_disabled">Audio recording disabled</string>
+    <string name="dashboard_debug_audio_update_failed">Failed to update audio recording</string>
+    <string name="dashboard_debug_polling_failed">Polling failed: %1$s</string>
+    <string name="dashboard_unknown_error">unknown error</string>
 
     <!-- Settings Screen Strings -->
     <string name="settings_back_button_content_description">Back</string>
@@ -60,20 +111,28 @@
     <string name="settings_dialog_ssid_name_label">SSID Name</string>
     <string name="settings_dialog_password_label">Password</string>
     <string name="dialog_save_button">Save</string>
-    <string name="email_subject_opendash_inquiry">OpenDash Inquiry</string>
 
-<!--    &lt;!&ndash; File Browser Screen Strings &ndash;&gt;-->
-<!--    <string name="file_browser_back_button_content_description">Back</string>-->
-<!--    <string name="file_browser_camera_storage_title">Camera Storage</string>-->
-<!--    <string name="file_browser_switch_view_content_description">Switch View</string>-->
-<!--    <string name="file_browser_no_files_found">No files found or not connected.</string>-->
-<!--    <string name="file_browser_downloading_progress">Downloading… %1$d%%</string>-->
-<!--    <string name="file_browser_delete_file_dialog_title">Delete File?</string>-->
-<!--    <string name="file_browser_delete_file_dialog_message">Are you sure you want to delete '%s'?</string>-->
-<!--    <string name="file_browser_delete_button">Delete</string>-->
-<!--    <string name="file_browser_thumbnail_content_description">Thumbnail</string>-->
-<!--    <string name="file_browser_download_button_content_description">Download</string>-->
-<!--    <string name="file_browser_delete_button_content_description">Delete</string>-->
+    <string name="settings_camera_ip_title">Camera IP / Gateway IP</string>
+    <string name="settings_camera_ip_auto">Auto detect (recommended)</string>
+    <string name="settings_camera_ip_hint">IP address</string>
+    <string name="settings_camera_ip_description">Leave empty to use auto discovery. Set manually if your camera does not respond on the default gateway.</string>
+    <string name="settings_show_password">Show password</string>
+    <string name="settings_hide_password">Hide password</string>
+
+    <!-- File Browser Screen Strings -->
+    <!--
+    <string name="file_browser_back_button_content_description">Back</string>
+    <string name="file_browser_camera_storage_title">Camera Storage</string>
+    <string name="file_browser_switch_view_content_description">Switch View</string>
+    <string name="file_browser_no_files_found">No files found or not connected.</string>
+    <string name="file_browser_downloading_progress">Downloading… %1$d%%</string>
+    <string name="file_browser_delete_file_dialog_title">Delete File?</string>
+    <string name="file_browser_delete_file_dialog_message">Are you sure you want to delete '%1$s'?</string>
+    <string name="file_browser_delete_button">Delete</string>
+    <string name="file_browser_thumbnail_content_description">Thumbnail</string>
+    <string name="file_browser_download_button_content_description">Download</string>
+    <string name="file_browser_delete_button_content_description">Delete</string>
+    -->
 
     <!-- Local Gallery Screen Strings -->
     <string name="local_gallery_downloaded_videos_title">Downloaded Videos</string>
@@ -82,7 +141,6 @@
 
     <!-- Remote Browser Wrapper Strings -->
     <string name="remote_browser_download_complete">Download Complete</string>
-    <string name="remote_browser_download_failed">Download Failed: %s</string>
+    <string name="remote_browser_download_failed">Download Failed: %1$s</string>
     <string name="remote_browser_no_video_player_found">No Video Player Found</string>
-
 </resources>
