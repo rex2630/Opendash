@@ -341,10 +341,11 @@ class NovatekHiHzProtocol : CameraProtocol {
             val dateText = timeRegex.find(line)?.groupValues?.getOrNull(1)?.trim().orEmpty()
 
             results += VideoFile(
-                name = fileName,
-                url = url,
-                date = if (dateText.isNotBlank()) dateText else "Unknown date",
-                size = sizeBytes?.let { formatBytes(it) } ?: ""
+                filename = fileName,
+                downloadUrl = url,
+                thumbnailUrl = url,
+                size = sizeBytes?.let { formatBytes(it) } ?: "",
+                time = if (dateText.isNotBlank()) dateText else "Unknown date"
             )
         }
 
