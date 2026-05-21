@@ -1,14 +1,32 @@
 package com.kooduXA.opendash.ui.screens
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.os.Build
-import android.widget.Toast
 import androidx.annotation.RequiresApi
-import androidx.compose.runtime.*
-import androidx.compose.ui.platform.LocalContext
-import com.kooduXA.opendash.R // Added import
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
@@ -17,70 +35,69 @@ fun EnhancedRemoteBrowserWrapper(
     colors: DashboardColors,
     onBack: () -> Unit
 ) {
-    val context = LocalContext.current
-    val files by viewModel.recordings.collectAsState()
-    val downloadState by viewModel.downloadState.collectAsState()
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121212))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .background(Color(0xFF1E1E1E))
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White
+                )
+            }
 
-    // Listen for Feedback (Delete Success/Error)
-    val dialogState by viewModel.dialogState.collectAsState()
+            Spacer(modifier = Modifier.width(8.dp))
 
-    LaunchedEffect(Unit) {
-        viewModel.fetchRecordings()
-    }
-
-    // FEEDBACK TOASTS
-    LaunchedEffect(dialogState) {
-        if (dialogState is DialogState.Success) {
-            Toast.makeText(context, (dialogState as DialogState.Success).message, Toast.LENGTH_SHORT).show()
+            Text(
+                text = "Remote Browser",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White
+            )
         }
-        if (dialogState is DialogState.Error) {
-            Toast.makeText(context, (dialogState as DialogState.Error).message, Toast.LENGTH_LONG).show()
+
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF1E1E1E)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = null,
+                        tint = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Remote browser is temporarily unavailable.",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "This screen still references removed ViewModel APIs and needs to be reconnected.",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
         }
-    }
-
-    // Show Download Feedback
-    LaunchedEffect(downloadState) {
-        if (downloadState is DownloadState.Success) {
-            Toast.makeText(context, context.getString(R.string.remote_browser_download_complete), Toast.LENGTH_SHORT).show()
-        }
-        if (downloadState is DownloadState.Error) {
-            Toast.makeText(context, context.getString(R.string.remote_browser_download_failed, (downloadState as DownloadState.Error).message), Toast.LENGTH_LONG).show()
-        }
-    }
-
-    FileBrowserScreen(
-        files = files,
-        // PASS COLORS DOWN (You need to update FileBrowserScreen signature)
-        // colors = colors,
-
-        onFileClick = { file ->
-            // PLAY VIDEO
-            // We use an Intent to open a video player (either system or internal)
-            playRemoteVideo(context, file.downloadUrl)
-        },
-        onDownloadClick = { file ->
-            viewModel.downloadVideo(file)
-        },
-        onDeleteClick = { file ->
-            viewModel.deleteFile(file)
-        },
-        onClose = onBack,
-
-        // Pass download progress to UI
-        downloadProgress = if (downloadState is DownloadState.Downloading) {
-            (downloadState as DownloadState.Downloading).progress
-        } else null
-    )
-}
-
-private fun playRemoteVideo(context: Context, url: String) {
-    try {
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(Uri.parse(url), "video/*")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        context.startActivity(intent)
-    } catch (e: Exception) {
-        Toast.makeText(context, context.getString(R.string.remote_browser_no_video_player_found), Toast.LENGTH_SHORT).show()
     }
 }
