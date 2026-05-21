@@ -204,12 +204,12 @@ class NovatekHiHzProtocol : CameraProtocol {
             ?.getOrNull(1)
             ?.toLongOrNull()
 
-        val usedMb = if (totalMb != null && freeMb != null) totalMb - freeMb else null
+        val totalBytes = totalMb?.times(1024L * 1024L) ?: return@withContext null
+        val freeBytes = freeMb?.times(1024L * 1024L) ?: return@withContext null
 
         StorageInfo(
-            total = totalMb?.let { "${it}MB" } ?: "Unknown",
-            used = usedMb?.let { "${it}MB" } ?: "Unknown",
-            free = freeMb?.let { "${it}MB" } ?: "Unknown"
+            totalBytes = totalBytes,
+            freeBytes = freeBytes
         )
     }
 
