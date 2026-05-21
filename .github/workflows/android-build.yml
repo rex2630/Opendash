@@ -36,13 +36,19 @@ jobs:
           sed -n '1,220p' app/build.gradle.kts
 
       - name: Build debug APK
-        run: gradle :app:processDebugResources --stacktrace --info
+        run: gradle :app:assembleDebug --stacktrace --info
+
+      - name: Show APK outputs
+        run: |
+          echo "---- APK outputs ----"
+          find app/build/outputs -type f | sort
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: opendash-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
       - name: Run unit tests
         run: gradle :app:testDebugUnitTest --stacktrace
