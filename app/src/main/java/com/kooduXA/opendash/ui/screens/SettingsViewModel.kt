@@ -1,80 +1,63 @@
 package com.kooduXA.opendash.ui.screens
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.kooduXA.opendash.data.repository.SettingsRepository
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import com.kooduXA.opendash.data.repository.ConnectionRepository
+import com.kooduXA.opendash.data.repository.SettingsRepository
 import com.kooduXA.opendash.domain.model.StorageInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    application: Application,
     private val repository: SettingsRepository,
     private val connectionRepository: ConnectionRepository
-) : AndroidViewModel(application) {
+) : ViewModel() {
 
     val settings = repository.settingsFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = SettingsRepository.AppSettings() // Default values
+            initialValue = SettingsRepository.AppSettings()
         )
 
     private val _storageInfo = MutableStateFlow<StorageInfo?>(null)
-    val storageInfo = _storageInfo.asStateFlow()
+    val storageInfo = _storageInfo
 
     private val _isFetchingStorageInfo = MutableStateFlow(false)
-    val isFetchingStorageInfo = _isFetchingStorageInfo.asStateFlow()
+    val isFetchingStorageInfo = _isFetchingStorageInfo
 
     private val _formatResult = MutableStateFlow<Boolean?>(null)
-    val formatResult = _formatResult.asStateFlow()
+    val formatResult = _formatResult
 
-//    private val repository = SettingsRepository(application)
-//
-    // State for settings
-    private val _settingsState = MutableStateFlow(SettingsRepository.AppSettings())
-    val settingsState: StateFlow<SettingsRepository.AppSettings> = _settingsState
-
-    // Loading state
     private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading
-
-    init {
-        // Load settings when ViewModel is created
-        loadSettings()
-    }
-
-    private fun loadSettings() {
-        viewModelScope.launch {
-            repository.settingsFlow.collect { settings ->
-                _settingsState.value = settings
-            }
-        }
-    }
+    val isLoading = _isLoading
 
     fun updateSetting(key: String, value: Any) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                when (key) {
-                    "nightMode" -> repository.setNightMode(value as Boolean)
-                    "videoResolution" -> repository.setVideoResolution(value as String)
-                    "loopRecording" -> repository.setLoopRecording(value as Boolean)
-                    "loopDuration" -> repository.setLoopDuration(value as Int)
-                    "audioRecording" -> repository.setAudioRecording(value as Boolean)
-                    "impactDetection" -> repository.setImpactDetection(value as Boolean)
-                    "motionDetection" -> repository.setMotionDetection(value as Boolean)
-                    // Add more cases as needed
+                val current = settings.value
+                val updated = when (key) {
+                    "nightMode" -> current.copy(nightMode = value as Boolean)
+                    "videoResolution" -> current.copy(videoResolution = value as String)
+                    "loopRecording" -> current.copy(loopRecording = value as Boolean)
+                    "loopDuration" -> current.copy(loopDuration = value as Int)
+                    "audioRecording" -> current.copy(audioRecording = value as Boolean)
+                    "impactDetection" -> current.copy(impactDetection = value as Boolean)
+                    "motionDetection" -> current.copy(motionDetection = value as Boolean)
+                    "wifiSSID" -> current.copy(wifiSSID = value as String)
+                    "wifiPassword" -> current.copy(wifiPassword = value as String)
+                    "wifiAutoConnect" -> current.copy(wifiAutoConnect = value as Boolean)
+                    "cameraIp" -> current.copy(cameraIp = value as String)
+                    else -> current
                 }
+
+                repository.updateSettings(updated)
             } finally {
                 _isLoading.value = false
             }
@@ -103,22 +86,21 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-
-
-
     fun fetchStorageInfo() {
         viewModelScope.launch {
             _isFetchingStorageInfo.value = true
-            _storageInfo.value = null
-            _storageInfo.value = connectionRepository.getStorageInfo()
-            _isFetchingStorageInfo.value = false
+            try {
+                _storageInfo.value = null
+                _storageInfo.value = connectionRepository.getStorageInfo()
+            } finally {
+                _isFetchingStorageInfo.value = false
+            }
         }
     }
 
     fun formatSdCard() {
         viewModelScope.launch {
-            val success = connectionRepository.formatSdCard()
-            _formatResult.value = success
+            _formatResult.value = connectionRepository.formatSdCard()
         }
     }
 
@@ -126,54 +108,58 @@ class SettingsViewModel @Inject constructor(
         _formatResult.value = null
     }
 
-
     fun updateResolution(res: String) {
-        viewModelScope.launch { repository.updateSettings(settings.value.copy(videoResolution = res)) }
+        viewModelScope.launch {
+            repository.updateSettings(settings.value.copy(videoResolution = res))
+        }
     }
 
     fun toggleLoopRecording(enabled: Boolean) {
-        viewModelScope.launch { repository.updateSettings(settings.value.copy(loopRecording = enabled)) }
+        viewModelScope.launch {
+            repository.updateSettings(settings.value.copy(loopRecording = enabled))
+        }
     }
 
     fun toggleAudio(enabled: Boolean) {
-        viewModelScope.launch { repository.updateSettings(settings.value.copy(audioRecording = enabled)) }
+        viewModelScope.launch {
+            repository.updateSettings(settings.value.copy(audioRecording = enabled))
+        }
     }
 
-
-
     fun toggleAutoConnect(enabled: Boolean) {
-        viewModelScope.launch { repository.updateSettings(settings.value.copy(wifiAutoConnect = enabled)) }
+        viewModelScope.launch {
+            repository.updateSettings(settings.value.copy(wifiAutoConnect = enabled))
+        }
+    }
+
+    fun updateCameraIp(ip: String) {
+        viewModelScope.launch {
+            repository.updateSettings(settings.value.copy(cameraIp = ip))
+        }
     }
 
     fun toggleDarkTheme(enabled: Boolean) {
-        // Example if you had app-specific UI settings
-        // viewModelScope.launch { repository.updateSettings(settings.value.copy(nightMode = enabled)) }
+        viewModelScope.launch {
+            repository.updateSettings(settings.value.copy(nightMode = enabled))
+        }
     }
 
-    // Reset to defaults
     fun resetSettings() {
         viewModelScope.launch {
-            repository.updateSettings(SettingsRepository.AppSettings()) // Resets to default data class values
+            repository.updateSettings(SettingsRepository.AppSettings())
         }
     }
 
     fun updateWifi(ssid: String, pass: String) {
         viewModelScope.launch {
-            // 1. Save to local preferences (so we remember it next time)
-            repository.updateSettings(settings.value.copy(
-                wifiSSID = ssid,
-                wifiPassword = pass
-            ))
+            repository.updateSettings(
+                settings.value.copy(
+                    wifiSSID = ssid,
+                    wifiPassword = pass
+                )
+            )
 
-            // 2. Send to Camera
-            // We need to access ConnectionRepository here.
-            // *Note: Ensure you inject ConnectionRepository into this ViewModel constructor.*
-            val success = connectionRepository.updateWifi(ssid, pass)
-
-            if (success) {
-                // Ideally, show a Toast here saying "Camera restarting..."
-                // The connection will drop immediately after this.
-            }
+            connectionRepository.updateWifi(ssid, pass)
         }
     }
 }
