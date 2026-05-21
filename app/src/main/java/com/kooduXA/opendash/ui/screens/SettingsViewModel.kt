@@ -8,6 +8,7 @@ import com.kooduXA.opendash.domain.model.StorageInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -26,16 +27,16 @@ class SettingsViewModel @Inject constructor(
         )
 
     private val _storageInfo = MutableStateFlow<StorageInfo?>(null)
-    val storageInfo = _storageInfo
+    val storageInfo = _storageInfo.asStateFlow()
 
     private val _isFetchingStorageInfo = MutableStateFlow(false)
-    val isFetchingStorageInfo = _isFetchingStorageInfo
+    val isFetchingStorageInfo = _isFetchingStorageInfo.asStateFlow()
 
     private val _formatResult = MutableStateFlow<Boolean?>(null)
-    val formatResult = _formatResult
+    val formatResult = _formatResult.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
-    val isLoading = _isLoading
+    val isLoading = _isLoading.asStateFlow()
 
     fun updateSetting(key: String, value: Any) {
         viewModelScope.launch {
