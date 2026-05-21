@@ -21,11 +21,13 @@ import com.kooduXA.opendash.domain.model.WifiInfo
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,16 +52,24 @@ class ConnectionRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val downloadClient = OkHttpClient.Builder().build()
 
+    private var protocolStateJob: Job? = null
+
     @RequiresApi(Build.VERSION_CODES.R)
     fun startDiscovery() {
         scope.launch {
             try {
+                disconnectInternal(clearState = false)
+
                 _connectionState.value = CameraState.Scanning
                 Log.d(TAG, "Starting camera discovery")
 
                 val manualCameraIp = getManualCameraIp()
                 val gatewayIp = getGatewayInfo()?.gatewayIp
                 val candidateIps = buildCandidateIps(manualCameraIp, gatewayIp)
+
+                Log.d(TAG, "Manual IP: $manualCameraIp")
+                Log.d(TAG, "Gateway IP: $gatewayIp")
+                Log.d(TAG, "Candidate IPs: $candidateIps")
 
                 val protocolFactories: List<() -> CameraProtocol> = listOf(
                     { AppHttpProtocol(context) },
@@ -71,9 +81,11 @@ class ConnectionRepository @Inject constructor(
                 outer@ for (ip in candidateIps) {
                     coroutineContext.ensureActive()
                     _connectionState.value = CameraState.Connecting
+                    Log.d(TAG, "Trying IP: $ip")
 
                     for (factory in protocolFactories) {
                         val protocol = factory()
+                        Log.d(TAG, "Probing ${protocol.protocolName} on $ip")
 
                         val canHandle = try {
                             protocol.canHandle(ip)
@@ -82,14 +94,19 @@ class ConnectionRepository @Inject constructor(
                             false
                         }
 
+                        Log.d(TAG, "Probe result ${protocol.protocolName} on $ip -> $canHandle")
+
                         if (!canHandle) continue
 
                         val success = try {
+                            Log.d(TAG, "Connecting ${protocol.protocolName} on $ip")
                             protocol.connect(ip)
                         } catch (e: Exception) {
                             Log.e(TAG, "Connect failed for ${protocol.protocolName} on $ip", e)
                             false
                         }
+
+                        Log.d(TAG, "Connect result ${protocol.protocolName} on $ip -> $success")
 
                         if (success) {
                             connectedProtocol = protocol
@@ -101,10 +118,11 @@ class ConnectionRepository @Inject constructor(
 
                 if (connectedProtocol != null) {
                     _activeProtocol.value = connectedProtocol
-                    _connectionState.value = CameraState.Connected
+                    bindProtocolState(connectedProtocol)
                 } else {
                     _activeProtocol.value = null
                     _connectionState.value = CameraState.Error("No supported camera found")
+                    Log.w(TAG, "Discovery finished: no supported camera found")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "startDiscovery failed", e)
@@ -116,13 +134,31 @@ class ConnectionRepository @Inject constructor(
     }
 
     fun disconnect() {
+        disconnectInternal(clearState = true)
+    }
+
+    private fun disconnectInternal(clearState: Boolean) {
         try {
+            protocolStateJob?.cancel()
+            protocolStateJob = null
             _activeProtocol.value?.disconnect()
         } catch (e: Exception) {
             Log.e(TAG, "Disconnect failed", e)
         } finally {
             _activeProtocol.value = null
-            _connectionState.value = CameraState.Disconnected
+            if (clearState) {
+                _connectionState.value = CameraState.Disconnected
+            }
+        }
+    }
+
+    private fun bindProtocolState(protocol: CameraProtocol) {
+        protocolStateJob?.cancel()
+        protocolStateJob = scope.launch {
+            protocol.connectionState.collectLatest { state ->
+                Log.d(TAG, "Protocol state from ${protocol.protocolName}: $state")
+                _connectionState.value = state
+            }
         }
     }
 
@@ -140,16 +176,21 @@ class ConnectionRepository @Inject constructor(
         val caps: NetworkCapabilities =
             connectivityManager.getNetworkCapabilities(activeNetwork) ?: return null
 
-        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return null
+        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+            Log.d(TAG, "Active network is not Wi-Fi")
+            return null
+        }
 
         val linkProperties: LinkProperties =
             connectivityManager.getLinkProperties(activeNetwork) ?: return null
 
         val gateway = linkProperties.routes
-            .firstOrNull { it.isDefaultRoute }
+            .firstOrNull { it.isDefaultRoute && it.gateway?.hostAddress?.contains('.') == true }
             ?.gateway
             ?.hostAddress
             ?: linkProperties.dhcpServerAddress?.hostAddress
+
+        Log.d(TAG, "Resolved gateway from LinkProperties: $gateway")
 
         return gateway?.takeIf { it.isNotBlank() }?.let {
             WifiInfo(ssid = "Unknown", gatewayIp = it)
@@ -160,7 +201,7 @@ class ConnectionRepository @Inject constructor(
         manualIp: String?,
         gatewayIp: String?
     ): List<String> {
-        return listOf(
+        val candidates = listOf(
             manualIp,
             gatewayIp,
             "192.168.169.1",
@@ -173,6 +214,9 @@ class ConnectionRepository @Inject constructor(
             .mapNotNull { it?.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
+
+        Log.d(TAG, "Built candidate IP list: $candidates")
+        return candidates
     }
 
     suspend fun getRecordings(): List<VideoFile> {
