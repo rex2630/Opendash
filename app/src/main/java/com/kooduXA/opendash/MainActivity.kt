@@ -165,9 +165,7 @@ fun OpenDashApp() {
         AppScreen.Dashboard -> {
             DashboardScreen(
                 viewModel = hiltViewModel(),
-                onNavigateToSettings = { currentScreen = AppScreen.Settings },
-                onNavigateToGallery = { currentScreen = AppScreen.Gallery },
-                onNavigateToFiles = { currentScreen = AppScreen.RemoteFiles }
+                onOpenSettings = { currentScreen = AppScreen.Settings }
             )
         }
 
