@@ -23,7 +23,10 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideConnectionRepository(@ApplicationContext context: Context): ConnectionRepository {
-        return ConnectionRepository(context)
+    fun provideConnectionRepository(
+        @ApplicationContext context: Context,
+        settingsRepository: SettingsRepository
+    ): ConnectionRepository {
+        return ConnectionRepository(context, settingsRepository)
     }
 }
