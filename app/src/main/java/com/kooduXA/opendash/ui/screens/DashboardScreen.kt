@@ -1,9 +1,16 @@
 package com.kooduXA.opendash.ui.screens
 
+import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
+import android.provider.Settings
 import androidx.annotation.RequiresApi
-import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -15,14 +22,45 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.rounded.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SdCardAlert
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VideocamOff
+import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,15 +69,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.unit.dp
-import com.kooduXA.opendash.VideoPlayer
-import androidx.compose.material3.ripple
-import androidx.compose.ui.res.stringResource // Added import
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.kooduXA.opendash.R // Added import
-
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kooduXA.opendash.R
+import com.kooduXA.opendash.VideoPlayer
+import kotlinx.coroutines.delay
 
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
@@ -49,22 +88,21 @@ fun DashboardScreen(
     onNavigateToGallery: () -> Unit,
     onNavigateToFiles: () -> Unit
 ) {
-
+    val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val uiState by viewModel.uiState.collectAsState()
-    val isRecording by viewModel.isRecording.collectAsState()
 
-    // Toggle controls visibility on tap (Optional)
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
+
     var areControlsVisible by remember { mutableStateOf(true) }
-
-
-    // Auto-hide only applies to Landscape now
     var showControls by remember { mutableStateOf(true) }
+
+    val networkDebug by rememberNetworkDebugInfo()
 
     LaunchedEffect(showControls, isLandscape) {
         if (isLandscape && showControls) {
-            kotlinx.coroutines.delay(5000)
+            delay(5000)
             showControls = false
         }
     }
@@ -72,12 +110,10 @@ fun DashboardScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black) // Force black background to avoid "white" flashes
-    ) { // <--- Add ) { here
+            .background(Color.Black)
+    ) {
         if (isLandscape) {
-            // LANDSCAPE LAYOUT (Z-Stack: Video behind, Controls in front)
             Box(modifier = Modifier.fillMaxSize()) {
-                // LAYER 1: VIDEO (Background)
                 VideoContent(
                     uiState = uiState,
                     viewModel = viewModel,
@@ -85,13 +121,11 @@ fun DashboardScreen(
                         .fillMaxSize()
                         .align(Alignment.Center),
                     onTap = {
-                        // Toggle controls visibility when video is tapped
                         areControlsVisible = !areControlsVisible
                         if (areControlsVisible) showControls = true
                     }
                 )
 
-                // LAYER 2: CONTROLS (Overlay with Fade Animation)
                 AnimatedVisibility(
                     visible = areControlsVisible,
                     enter = fadeIn(),
@@ -99,17 +133,27 @@ fun DashboardScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     Box(Modifier.fillMaxSize()) {
-                        // --- TOP LEFT: Status Pill ---
-                        StatusPill(
-                            uiState = uiState,
-                            viewModel = viewModel,
+                        Column(
                             modifier = Modifier
                                 .align(Alignment.TopStart)
                                 .padding(16.dp)
-                                .statusBarsPadding()
-                        )
+                                .statusBarsPadding(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            StatusPill(
+                                uiState = uiState,
+                                viewModel = viewModel,
+                                modifier = Modifier
+                            )
 
-                        // --- TOP RIGHT: Rec Badge ---
+                            NetworkDebugPill(
+                                info = networkDebug,
+                                onOpenWifiSettings = {
+                                    context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                                }
+                            )
+                        }
+
                         if (isRecording) {
                             RecordingBadge(
                                 modifier = Modifier
@@ -119,7 +163,6 @@ fun DashboardScreen(
                             )
                         }
 
-                        // --- RIGHT SIDE: CAMERA ACTIONS (Audio, Shutter, Photo) ---
                         Column(
                             modifier = Modifier
                                 .align(Alignment.CenterEnd)
@@ -127,50 +170,43 @@ fun DashboardScreen(
                             verticalArrangement = Arrangement.spacedBy(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            // 1. Audio Toggle
-                            val isAudio by viewModel.isAudioEnabled.collectAsState()
+                            val isAudio by viewModel.isAudioEnabled.collectAsStateWithLifecycle()
+
                             GlassIconButton(
                                 icon = if (isAudio) Icons.Default.Mic else Icons.Default.MicOff,
                                 onClick = { viewModel.toggleAudio() },
                                 tint = if (isAudio) Color.White else Color.Yellow
                             )
 
-                            // 2. Big Shutter Button
                             BigShutterButton(viewModel)
 
-                            // 3. Photo Button
                             GlassIconButton(
                                 icon = Icons.Rounded.PhotoCamera,
                                 onClick = { viewModel.takePhoto() }
                             )
                         }
 
-                        // --- LEFT SIDE: MENU & NAVIGATION (Files, Gallery, Settings, Reconnect) ---
                         Column(
                             modifier = Modifier
                                 .align(Alignment.CenterStart)
                                 .padding(start = 32.dp),
                             verticalArrangement = Arrangement.spacedBy(24.dp)
                         ) {
-                            // 1. Files Button
                             SmallCircleButton(
                                 icon = Icons.Rounded.Folder,
                                 onClick = onNavigateToFiles
                             )
 
-                            // 2. Local Gallery Button
                             SmallCircleButton(
                                 icon = Icons.Default.PhoneAndroid,
                                 onClick = onNavigateToGallery
                             )
 
-                            // 3. Settings Button
                             SmallCircleButton(
                                 icon = Icons.Default.Settings,
                                 onClick = onNavigateToSettings
                             )
 
-                            // 4. Reconnect Button
                             SmallCircleButton(
                                 icon = Icons.Default.Refresh,
                                 onClick = { viewModel.connect() }
@@ -180,9 +216,7 @@ fun DashboardScreen(
                 }
             }
         } else {
-            // PORTRAIT LAYOUT (Column: Video on top, Controls on bottom)
             Column(modifier = Modifier.fillMaxSize()) {
-                // VIDEO SECTION
                 Box(
                     modifier = Modifier
                         .weight(0.55f)
@@ -196,7 +230,6 @@ fun DashboardScreen(
                         onTap = null
                     )
 
-                    // REC BADGE - Top Right of Video Area
                     if (isRecording) {
                         RecordingBadge(
                             modifier = Modifier
@@ -205,32 +238,41 @@ fun DashboardScreen(
                         )
                     }
 
-                    // Status Pill (Top Left)
-                    StatusPill(
-                        uiState = uiState,
-                        viewModel = viewModel,
+                    Column(
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .padding(16.dp)
-                    )
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        StatusPill(
+                            uiState = uiState,
+                            viewModel = viewModel,
+                            modifier = Modifier
+                        )
+
+                        NetworkDebugPill(
+                            info = networkDebug,
+                            onOpenWifiSettings = {
+                                context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                            }
+                        )
+                    }
                 }
 
-                // BOTTOM SECTION: CONTROLS (Permanent)
                 Box(
                     modifier = Modifier
                         .weight(0.45f)
                         .fillMaxWidth()
-                        .background(Color(0xFF1E1E1E)) // Solid dark gray background
+                        .background(Color(0xFF1E1E1E))
                 ) {
                     PortraitControls(
-                        viewModel,
-                        onNavigateToSettings,
-                        onNavigateToGallery,
-                        onNavigateToFiles
+                        viewModel = viewModel,
+                        onSettings = onNavigateToSettings,
+                        onGallery = onNavigateToGallery,
+                        onFiles = onNavigateToFiles
                     )
                 }
             }
-
         }
     }
 }
@@ -243,41 +285,66 @@ fun VideoContent(
     modifier: Modifier,
     onTap: (() -> Unit)?
 ) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+    Box(
+        modifier = modifier.then(
+            if (onTap != null) {
+                Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { onTap() }
+            } else {
+                Modifier
+            }
+        ),
+        contentAlignment = Alignment.Center
+    ) {
         if (uiState is DashboardUiState.Streaming) {
             VideoPlayer(
                 url = uiState.url,
-                modifier = Modifier.fillMaxSize(),
-                //onVideoTap = { onTap?.invoke() }
+                modifier = Modifier.fillMaxSize()
             )
         } else {
-            // Placeholder
-            if (uiState is DashboardUiState.Loading) {
-                CircularProgressIndicator(color = Color(0xFF00E676))
-            } else if (uiState is DashboardUiState.Error) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.WifiOff, null, tint = Color.Red)
-                    Text((uiState as DashboardUiState.Error).message, color = Color.White)
-                    Button(onClick = { viewModel.connect() }) { Text(stringResource(R.string.dashboard_retry_button)) }
+            when (uiState) {
+                is DashboardUiState.Loading -> {
+                    CircularProgressIndicator(color = Color(0xFF00E676))
                 }
-            } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.VideocamOff, null, tint = Color.Gray, modifier = Modifier.size(48.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Text(stringResource(R.string.dashboard_not_connected), color = Color.Gray)
-                    Button(
-                        onClick = { viewModel.connect() },
-                        modifier = Modifier.padding(top = 16.dp)
-                    ) { Text(stringResource(R.string.dashboard_connect_to_camera_button)) }
+
+                is DashboardUiState.Error -> {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.WifiOff, null, tint = Color.Red)
+                        Text(uiState.message, color = Color.White)
+                        Button(onClick = { viewModel.connect() }) {
+                            Text(stringResource(R.string.dashboard_retry_button))
+                        }
+                    }
+                }
+
+                else -> {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Default.VideocamOff,
+                            null,
+                            tint = Color.Gray,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.dashboard_not_connected),
+                            color = Color.Gray
+                        )
+                        Button(
+                            onClick = { viewModel.connect() },
+                            modifier = Modifier.padding(top = 16.dp)
+                        ) {
+                            Text(stringResource(R.string.dashboard_connect_to_camera_button))
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-// ============================================================================================
-// PORTRAIT CONTROLS (Permanent Bottom Panel)
-// ============================================================================================
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
 fun PortraitControls(
@@ -287,11 +354,12 @@ fun PortraitControls(
     onFiles: () -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Row 1: Secondary Actions
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -300,20 +368,16 @@ fun PortraitControls(
             ControlItem(Icons.Default.Settings, stringResource(R.string.dashboard_settings_button), onSettings)
         }
 
-        // Row 2: Main Actions (Shutter)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Photo Button
             GlassIconButton(Icons.Rounded.PhotoCamera, onClick = { viewModel.takePhoto() })
 
-            // Record Button (Big)
             BigShutterButton(viewModel)
 
-            // Audio Toggle
-            val isAudio by viewModel.isAudioEnabled.collectAsState()
+            val isAudio by viewModel.isAudioEnabled.collectAsStateWithLifecycle()
             GlassIconButton(
                 if (isAudio) Icons.Default.Mic else Icons.Default.MicOff,
                 onClick = { viewModel.toggleAudio() },
@@ -321,7 +385,6 @@ fun PortraitControls(
             )
         }
 
-        // Row 3: Bottom Toggles
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -332,9 +395,6 @@ fun PortraitControls(
     }
 }
 
-// ============================================================================================
-// LANDSCAPE HUD (Overlay)
-// ============================================================================================
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
 fun LandscapeHud(
@@ -345,7 +405,11 @@ fun LandscapeHud(
     onFiles: () -> Unit
 ) {
     Row(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxHeight()) {
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        ) {
             StatusPill(uiState, viewModel, Modifier.padding(16.dp))
         }
 
@@ -367,12 +431,12 @@ fun LandscapeHud(
     }
 }
 
-// ============================================================================================
-// HELPER COMPONENTS
-// ============================================================================================
 @Composable
 fun ControlItem(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onClick() }) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable { onClick() }
+    ) {
         Icon(icon, null, tint = Color.LightGray, modifier = Modifier.size(28.dp))
         Spacer(Modifier.height(4.dp))
         Text(label, color = Color.Gray, style = MaterialTheme.typography.labelSmall)
@@ -382,10 +446,9 @@ fun ControlItem(icon: ImageVector, label: String, onClick: () -> Unit) {
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
 fun BigShutterButton(viewModel: DashboardViewModel) {
-    val isRecording by viewModel.isRecording.collectAsState()
+    val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
     val haptic = LocalHapticFeedback.current
 
-    // Animation Setup (Pulse Effect)
     val infiniteTransition = rememberInfiniteTransition(label = "PulseTransition")
 
     val pulseScale by infiniteTransition.animateFloat(
@@ -409,7 +472,6 @@ fun BigShutterButton(viewModel: DashboardViewModel) {
     )
 
     Box(contentAlignment = Alignment.Center) {
-        // --- LAYER 1: PULSING RING ---
         if (isRecording) {
             Box(
                 modifier = Modifier
@@ -419,17 +481,15 @@ fun BigShutterButton(viewModel: DashboardViewModel) {
             )
         }
 
-        // --- LAYER 2: BUTTON ---
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(80.dp)
                 .border(4.dp, if (isRecording) Color.Red else Color.White, CircleShape)
                 .clip(CircleShape)
-                .background(if (isRecording) Color.Transparent else Color.Black.copy(0.3f))
+                .background(if (isRecording) Color.Transparent else Color.Black.copy(alpha = 0.3f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    // FIX: Use 'ripple' instead of 'rememberRipple'
                     indication = ripple(bounded = true, color = Color.Red),
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -438,14 +498,12 @@ fun BigShutterButton(viewModel: DashboardViewModel) {
                 )
         ) {
             if (isRecording) {
-                // STOP ICON (Square)
                 Box(
                     modifier = Modifier
                         .size(32.dp)
                         .background(Color.Red, RoundedCornerShape(8.dp))
                 )
             } else {
-                // RECORD ICON (Circle)
                 Box(
                     modifier = Modifier
                         .size(56.dp)
@@ -457,7 +515,11 @@ fun BigShutterButton(viewModel: DashboardViewModel) {
 }
 
 @Composable
-fun GlassIconButton(icon: ImageVector, onClick: () -> Unit, tint: Color = Color.White) {
+fun GlassIconButton(
+    icon: ImageVector,
+    onClick: () -> Unit,
+    tint: Color = Color.White
+) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -472,10 +534,14 @@ fun GlassIconButton(icon: ImageVector, onClick: () -> Unit, tint: Color = Color.
 
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
-fun StatusPill(uiState: DashboardUiState, viewModel: DashboardViewModel, modifier: Modifier) {
-    val hasSdCard by viewModel.hasSdCard.collectAsState()
-    val isRecording by viewModel.isRecording.collectAsState()
-    val duration by viewModel.recordingDuration.collectAsState()
+fun StatusPill(
+    uiState: DashboardUiState,
+    viewModel: DashboardViewModel,
+    modifier: Modifier
+) {
+    val hasSdCard by viewModel.hasSdCard.collectAsStateWithLifecycle()
+    val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
+    val duration by viewModel.recordingDuration.collectAsStateWithLifecycle()
 
     Row(
         modifier = modifier
@@ -490,7 +556,12 @@ fun StatusPill(uiState: DashboardUiState, viewModel: DashboardViewModel, modifie
             is DashboardUiState.Error -> Color.Red to stringResource(R.string.dashboard_status_error)
             else -> Color.Gray to stringResource(R.string.dashboard_status_idle)
         }
-        Box(Modifier.size(8.dp).background(color, CircleShape))
+
+        Box(
+            Modifier
+                .size(8.dp)
+                .background(color, CircleShape)
+        )
         Spacer(Modifier.width(6.dp))
         Text(text, color = Color.White, style = MaterialTheme.typography.labelSmall)
 
@@ -501,7 +572,11 @@ fun StatusPill(uiState: DashboardUiState, viewModel: DashboardViewModel, modifie
 
         if (isRecording) {
             Spacer(Modifier.width(12.dp))
-            Box(Modifier.size(8.dp).background(Color.Red, CircleShape))
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .background(Color.Red, CircleShape)
+            )
             Spacer(Modifier.width(4.dp))
             Text(duration, color = Color.White, style = MaterialTheme.typography.labelSmall)
         }
@@ -512,7 +587,6 @@ fun StatusPill(uiState: DashboardUiState, viewModel: DashboardViewModel, modifie
 fun RecordingBadge(modifier: Modifier = Modifier) {
     val infiniteTransition = rememberInfiniteTransition(label = "RecBlink")
 
-    // Blink Animation (Opacity 1.0 -> 0.0)
     val alpha by infiniteTransition.animateFloat(
         initialValue = 1f,
         targetValue = 0f,
@@ -529,7 +603,6 @@ fun RecordingBadge(modifier: Modifier = Modifier) {
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Blinking Red Dot
         Box(
             modifier = Modifier
                 .size(12.dp)
@@ -557,4 +630,82 @@ fun SmallCircleButton(icon: ImageVector, onClick: () -> Unit) {
     ) {
         Icon(icon, contentDescription = null, tint = Color.White)
     }
+}
+
+@Composable
+fun NetworkDebugPill(
+    info: NetworkDebugInfo,
+    onOpenWifiSettings: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(onClick = onOpenWifiSettings)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = "Network: ${info.summary}",
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium
+        )
+
+        Spacer(modifier = Modifier.height(2.dp))
+
+        Text(
+            text = info.detail,
+            color = Color.LightGray,
+            style = MaterialTheme.typography.labelSmall
+        )
+    }
+}
+
+@Composable
+fun rememberNetworkDebugInfo(): State<NetworkDebugInfo> {
+    val context = LocalContext.current
+
+    return produceState(initialValue = getNetworkDebugInfo(context), context) {
+        while (true) {
+            value = getNetworkDebugInfo(context)
+            delay(2000)
+        }
+    }
+}
+
+data class NetworkDebugInfo(
+    val summary: String,
+    val detail: String
+)
+
+fun getNetworkDebugInfo(context: Context): NetworkDebugInfo {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val activeNetwork = cm.activeNetwork
+        ?: return NetworkDebugInfo(
+            summary = "No active network",
+            detail = "Phone is not connected to any active network."
+        )
+
+    val caps = cm.getNetworkCapabilities(activeNetwork)
+        ?: return NetworkDebugInfo(
+            summary = "Unknown",
+            detail = "Could not load NetworkCapabilities."
+        )
+
+    val transports = buildList {
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) add("Wi‑Fi")
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) add("Cellular")
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) add("Ethernet")
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) add("VPN")
+    }.ifEmpty { listOf("Other") }
+
+    val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    val internet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+
+    val summary = transports.joinToString(" + ")
+    val detail = "internet=$internet, validated=$validated"
+
+    return NetworkDebugInfo(
+        summary = summary,
+        detail = detail
+    )
 }
