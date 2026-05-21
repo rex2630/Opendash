@@ -1,11 +1,11 @@
 /*
  * +-----------------------------------------------+
  * |   _                    _       __   __    _   |
- * |  | |                  | |      \ \ / /   / \  |
- * |  | | __ ___   ___   __| |_   _  \ V /   / _ \ |
- * |  | |/ // _ \ / _ \ / _` | | | | /   \  / ___ \|
- * |  |   <| (_) | (_) | (_| | |_| |/ /^\ \/ /   \ \
- * |  |_|\_\\___/ \___/ \__,_|\__,_/\/   \/\_|   |_|
+ * |  | |                  | |      \\ \\ / /   / \\  |
+ * |  | | __ ___   ___   __| |_   _  \\ V /   / _ \\ |
+ * |  | |/ // _ \\ / _ \\ / _` | | | | /   \\  / ___ \\|
+ * |  |   <| (_) | (_) | (_| | |_| |/ /^\\ \\/ /   \\ \\
+ * |  |_|\\_\\\\___/ \\___/ \\__,_|\\__,_/\\/   \\/\\_|   |_|
  * |                                               |
  * +-----------------------------------------------+
  * OpenSourced by kooduXA
@@ -32,6 +32,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.kooduXA.opendash.ui.screens.AppPermissionGate
 import com.kooduXA.opendash.ui.screens.DashboardScreen
 import com.kooduXA.opendash.ui.screens.DayColors
+import com.kooduXA.opendash.ui.screens.DebugConsoleScreen
 import com.kooduXA.opendash.ui.screens.EnhancedLocalGalleryScreen
 import com.kooduXA.opendash.ui.screens.EnhancedRemoteBrowserWrapper
 import com.kooduXA.opendash.ui.screens.SettingsScreen
@@ -138,7 +139,9 @@ fun OpenDashRoot(
     onContinueWithoutPermissions: () -> Unit
 ) {
     if (permissionsGranted) {
-        OpenDashApp()
+        OpenDashApp(
+            isDebugBuild = BuildConfig.DEBUG
+        )
     } else {
         AppPermissionGate(
             missingPermissions = missingPermissions,
@@ -151,12 +154,11 @@ fun OpenDashRoot(
 
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
-fun OpenDashApp() {
+fun OpenDashApp(
+    isDebugBuild: Boolean
+) {
     var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Dashboard) }
 
-    // GLOBAL BACK HANDLER
-    // If we are NOT on Dashboard, the Back button takes us to Dashboard.
-    // If we ARE on Dashboard, the system handles it (closes app).
     BackHandler(enabled = currentScreen != AppScreen.Dashboard) {
         currentScreen = AppScreen.Dashboard
     }
@@ -171,7 +173,15 @@ fun OpenDashApp() {
 
         AppScreen.Settings -> {
             SettingsScreen(
-                onBack = { currentScreen = AppScreen.Dashboard }
+                onBack = { currentScreen = AppScreen.Dashboard },
+                onOpenDebugConsole = { currentScreen = AppScreen.DebugConsole },
+                showDeveloperSection = isDebugBuild
+            )
+        }
+
+        AppScreen.DebugConsole -> {
+            DebugConsoleScreen(
+                onBack = { currentScreen = AppScreen.Settings }
             )
         }
 
@@ -194,6 +204,7 @@ fun OpenDashApp() {
 sealed class AppScreen {
     object Dashboard : AppScreen()
     object Settings : AppScreen()
+    object DebugConsole : AppScreen()
     object Gallery : AppScreen()
     object RemoteFiles : AppScreen()
 }
