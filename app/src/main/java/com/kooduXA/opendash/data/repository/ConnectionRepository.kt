@@ -11,9 +11,10 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import androidx.annotation.RequiresApi
+import com.kooduXA.opendash.data.protocol.AppHttpProtocol
 import com.kooduXA.opendash.data.protocol.CameraProtocol
 import com.kooduXA.opendash.data.protocol.DeviceStatus
-import com.kooduXA.opendash.data.protocol.NovatekHiHzProtocol
+import com.kooduXA.opendash.data.protocol.NovatekCgiProtocol
 import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.VideoFile
 import com.kooduXA.opendash.domain.model.WifiInfo
@@ -40,7 +41,6 @@ class ConnectionRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val settingsRepository: SettingsRepository
 ) {
-
     private val _connectionState = MutableStateFlow<CameraState>(CameraState.Disconnected)
     val connectionState: StateFlow<CameraState> = _connectionState.asStateFlow()
 
@@ -48,7 +48,6 @@ class ConnectionRepository @Inject constructor(
     val activeProtocol: StateFlow<CameraProtocol?> = _activeProtocol.asStateFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     private val downloadClient = OkHttpClient.Builder().build()
 
     @RequiresApi(Build.VERSION_CODES.R)
@@ -59,66 +58,53 @@ class ConnectionRepository @Inject constructor(
                 Log.d(TAG, "Starting camera discovery")
 
                 val manualCameraIp = getManualCameraIp()
-                Log.d(TAG, "Manual camera IP from settings: ${manualCameraIp ?: "<empty>"}")
+                val gatewayIp = getGatewayInfo()?.gatewayIp
+                val candidateIps = buildCandidateIps(manualCameraIp, gatewayIp)
 
-                val wifiInfo = getGatewayInfo()
-                val gatewayIp = wifiInfo?.gatewayIp
-
-                if (gatewayIp != null) {
-                    Log.d(TAG, "Active Wi-Fi gateway: $gatewayIp")
-                } else {
-                    Log.w(TAG, "No Wi-Fi gateway info found")
-                }
-
-                val candidateIps = buildCandidateIps(
-                    manualIp = manualCameraIp,
-                    gatewayIp = gatewayIp
+                val protocolFactories: List<() -> CameraProtocol> = listOf(
+                    { AppHttpProtocol(context) },
+                    { NovatekCgiProtocol(context) }
                 )
-
-                if (candidateIps.isEmpty()) {
-                    Log.e(TAG, "No candidate IPs available")
-                    _activeProtocol.value = null
-                    _connectionState.value = CameraState.Error("No camera IP candidates available")
-                    return@launch
-                }
-
-                Log.d(TAG, "Candidate camera IPs: $candidateIps")
 
                 var connectedProtocol: CameraProtocol? = null
 
-                for (ip in candidateIps) {
+                outer@ for (ip in candidateIps) {
                     coroutineContext.ensureActive()
-
-                    Log.d(TAG, "Trying candidate IP: $ip")
                     _connectionState.value = CameraState.Connecting
 
-                    val protocol = NovatekHiHzProtocol(context)
+                    for (factory in protocolFactories) {
+                        val protocol = factory()
 
-                    val success = try {
-                        protocol.connect(ip)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Protocol connect failed for $ip", e)
-                        false
-                    }
+                        val canHandle = try {
+                            protocol.canHandle(ip)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Probe failed for ${protocol.protocolName} on $ip", e)
+                            false
+                        }
 
-                    if (success) {
-                        connectedProtocol = protocol
-                        Log.d(TAG, "Camera handshake success on $ip")
-                        break
-                    } else {
-                        Log.w(TAG, "Camera handshake failed on $ip")
+                        if (!canHandle) continue
+
+                        val success = try {
+                            protocol.connect(ip)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Connect failed for ${protocol.protocolName} on $ip", e)
+                            false
+                        }
+
+                        if (success) {
+                            connectedProtocol = protocol
+                            Log.d(TAG, "Connected using ${protocol.protocolName} on $ip")
+                            break@outer
+                        }
                     }
                 }
 
                 if (connectedProtocol != null) {
                     _activeProtocol.value = connectedProtocol
                     _connectionState.value = CameraState.Connected
-                    Log.d(TAG, "Discovery complete: camera connected")
                 } else {
                     _activeProtocol.value = null
-                    _connectionState.value =
-                        CameraState.Error("Camera handshake failed on all candidate IPs")
-                    Log.e(TAG, "Discovery failed on all candidate IPs")
+                    _connectionState.value = CameraState.Error("No supported camera found")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "startDiscovery failed", e)
@@ -150,27 +136,14 @@ class ConnectionRepository @Inject constructor(
         val connectivityManager =
             context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-        val activeNetwork: Network = connectivityManager.activeNetwork ?: run {
-            Log.w(TAG, "No active network")
-            return null
-        }
-
+        val activeNetwork: Network = connectivityManager.activeNetwork ?: return null
         val caps: NetworkCapabilities =
-            connectivityManager.getNetworkCapabilities(activeNetwork) ?: run {
-                Log.w(TAG, "No network capabilities for active network")
-                return null
-            }
+            connectivityManager.getNetworkCapabilities(activeNetwork) ?: return null
 
-        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-            Log.w(TAG, "Active network is not Wi-Fi")
-            return null
-        }
+        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return null
 
         val linkProperties: LinkProperties =
-            connectivityManager.getLinkProperties(activeNetwork) ?: run {
-                Log.w(TAG, "No link properties for active Wi-Fi network")
-                return null
-            }
+            connectivityManager.getLinkProperties(activeNetwork) ?: return null
 
         val gateway = linkProperties.routes
             .firstOrNull { it.isDefaultRoute }
@@ -178,16 +151,8 @@ class ConnectionRepository @Inject constructor(
             ?.hostAddress
             ?: linkProperties.dhcpServerAddress?.hostAddress
 
-        Log.d(TAG, "LinkProperties gateway resolved to: $gateway")
-
-        return if (!gateway.isNullOrBlank()) {
-            WifiInfo(
-                ssid = "Unknown",
-                gatewayIp = gateway
-            )
-        } else {
-            Log.w(TAG, "Gateway IP could not be resolved")
-            null
+        return gateway?.takeIf { it.isNotBlank() }?.let {
+            WifiInfo(ssid = "Unknown", gatewayIp = it)
         }
     }
 
@@ -195,17 +160,16 @@ class ConnectionRepository @Inject constructor(
         manualIp: String?,
         gatewayIp: String?
     ): List<String> {
-        val fallbacks = listOf(
+        return listOf(
             manualIp,
             gatewayIp,
+            "192.168.169.1",
             "192.168.0.1",
             "192.168.1.1",
             "192.168.42.1",
             "192.168.10.1",
             "10.10.10.254"
         )
-
-        return fallbacks
             .mapNotNull { it?.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
@@ -226,8 +190,6 @@ class ConnectionRepository @Inject constructor(
         onProgress: (Float) -> Unit
     ) {
         withContext(Dispatchers.IO) {
-            Log.d(TAG, "Starting direct download for: $filename from $url")
-
             val resolver = context.contentResolver
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
@@ -260,7 +222,6 @@ class ConnectionRepository @Inject constructor(
                         body.byteStream().use { inputStream ->
                             while (true) {
                                 coroutineContext.ensureActive()
-
                                 val bytes = inputStream.read(buffer)
                                 if (bytes < 0) break
 
@@ -278,12 +239,9 @@ class ConnectionRepository @Inject constructor(
                     }
                 } ?: throw IOException("Failed to open MediaStore output stream")
             } catch (e: Exception) {
-                Log.e(TAG, "Download failed, cleaning MediaStore entry", e)
                 resolver.delete(uri, null, null)
                 throw e
             }
-
-            Log.d(TAG, "Download success: saved to $uri")
         }
     }
 
@@ -305,7 +263,10 @@ class ConnectionRepository @Inject constructor(
 
     suspend fun setAudioRecording(enabled: Boolean): Boolean {
         return try {
-            (activeProtocol.value as? NovatekHiHzProtocol)?.setAudioRecording(enabled) ?: false
+            when (val protocol = activeProtocol.value) {
+                is NovatekCgiProtocol -> protocol.setAudioRecording(enabled)
+                else -> false
+            }
         } catch (e: Exception) {
             Log.e(TAG, "setAudioRecording failed", e)
             false
@@ -314,8 +275,11 @@ class ConnectionRepository @Inject constructor(
 
     suspend fun getDeviceStatus(): DeviceStatus {
         return try {
-            (activeProtocol.value as? NovatekHiHzProtocol)?.getDeviceStatus()
-                ?: DeviceStatus(isRecording = false, hasSdCard = false)
+            when (val protocol = activeProtocol.value) {
+                is NovatekCgiProtocol -> protocol.getDeviceStatus()
+                is AppHttpProtocol -> protocol.getDeviceStatus()
+                else -> DeviceStatus(isRecording = false, hasSdCard = false)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "getDeviceStatus failed", e)
             DeviceStatus(isRecording = false, hasSdCard = false)
@@ -324,7 +288,11 @@ class ConnectionRepository @Inject constructor(
 
     suspend fun updateWifi(ssid: String, pass: String): Boolean {
         return try {
-            (activeProtocol.value as? NovatekHiHzProtocol)?.setWifiCredentials(ssid, pass) ?: false
+            when (val protocol = activeProtocol.value) {
+                is NovatekCgiProtocol -> protocol.setWifiCredentials(ssid, pass)
+                is AppHttpProtocol -> protocol.setWifiCredentials(ssid, pass)
+                else -> false
+            }
         } catch (e: Exception) {
             Log.e(TAG, "updateWifi failed", e)
             false
