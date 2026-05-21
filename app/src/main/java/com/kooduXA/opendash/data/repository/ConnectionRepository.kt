@@ -92,7 +92,7 @@ class ConnectionRepository @Inject constructor(
                     Log.d(TAG, "Trying candidate IP: $ip")
                     _connectionState.value = CameraState.Connecting
 
-                    val protocol = NovatekHiHzProtocol()
+                    val protocol = NovatekHiHzProtocol(context)
 
                     val success = try {
                         protocol.connect(ip)
@@ -200,6 +200,8 @@ class ConnectionRepository @Inject constructor(
             gatewayIp,
             "192.168.0.1",
             "192.168.1.1",
+            "192.168.42.1",
+            "192.168.10.1",
             "10.10.10.254"
         )
 
