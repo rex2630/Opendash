@@ -54,6 +54,7 @@ class SettingsRepository @Inject constructor(
         val WIFI_AUTO_CONNECT = booleanPreferencesKey("wifi_auto_connect")
         val WIFI_SSID = stringPreferencesKey("wifi_ssid")
         val WIFI_PASSWORD = stringPreferencesKey("wifi_password")
+        val CAMERA_IP = stringPreferencesKey("camera_ip")
         val HOTSPOT_MODE = booleanPreferencesKey("hotspot_mode")
         val HOTSPOT_SSID = stringPreferencesKey("hotspot_ssid")
         val HOTSPOT_PASSWORD = stringPreferencesKey("hotspot_password")
@@ -114,6 +115,7 @@ class SettingsRepository @Inject constructor(
         val wifiAutoConnect: Boolean = true,
         val wifiSSID: String = "OpenDash_Cam",
         val wifiPassword: String = "",
+        val cameraIp: String = "",
         val hotspotMode: Boolean = false,
         val hotspotSSID: String = "OpenDash_Hotspot",
         val hotspotPassword: String = "opendash123",
@@ -170,6 +172,7 @@ class SettingsRepository @Inject constructor(
             wifiAutoConnect = preferences[WIFI_AUTO_CONNECT] ?: true,
             wifiSSID = preferences[WIFI_SSID] ?: "OpenDash_Cam",
             wifiPassword = preferences[WIFI_PASSWORD] ?: "",
+            cameraIp = preferences[CAMERA_IP] ?: "",
             hotspotMode = preferences[HOTSPOT_MODE] ?: false,
             hotspotSSID = preferences[HOTSPOT_SSID] ?: "OpenDash_Hotspot",
             hotspotPassword = preferences[HOTSPOT_PASSWORD] ?: "opendash123",
@@ -239,6 +242,12 @@ class SettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setCameraIp(ip: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[CAMERA_IP] = ip
+        }
+    }
+
     // Reset to defaults
     suspend fun resetToDefaults() {
         context.settingsDataStore.edit { preferences ->
@@ -274,6 +283,7 @@ class SettingsRepository @Inject constructor(
             preferences[WIFI_AUTO_CONNECT] = newSettings.wifiAutoConnect
             preferences[WIFI_SSID] = newSettings.wifiSSID
             preferences[WIFI_PASSWORD] = newSettings.wifiPassword
+            preferences[CAMERA_IP] = newSettings.cameraIp
             preferences[HOTSPOT_MODE] = newSettings.hotspotMode
             preferences[HOTSPOT_SSID] = newSettings.hotspotSSID
             preferences[HOTSPOT_PASSWORD] = newSettings.hotspotPassword
