@@ -69,12 +69,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kooduXA.opendash.BuildConfig
 import com.kooduXA.opendash.R
 
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenDebugConsole: () -> Unit
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -184,6 +186,20 @@ fun SettingsScreen(
                         onClick = { viewModel.resetSettings() },
                         textColor = Color(0xFFEF5350)
                     )
+                }
+            }
+
+            if (BuildConfig.DEBUG) {
+                item {
+                    SectionHeader(text = "Developer")
+                    SettingsGroup {
+                        SettingsItem(
+                            icon = Icons.Default.Code,
+                            title = "Debug Console",
+                            subtitle = "View internal logs and diagnostics",
+                            onClick = onOpenDebugConsole
+                        )
+                    }
                 }
             }
 
