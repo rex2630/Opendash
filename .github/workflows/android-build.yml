@@ -3,22 +3,13 @@ name: Android Build
 on:
   workflow_dispatch:
   push:
-    branches:
-      - master
-      - main
-      - develop
+    branches: [ master, main, develop ]
   pull_request:
-    branches:
-      - master
-      - main
-      - develop
+    branches: [ master, main, develop ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout
@@ -53,24 +44,4 @@ jobs:
         with:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
-
-      - name: Upload test reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-reports
-          path: |
-            app/build/reports/tests/
-            app/build/test-results/
-          if-no-files-found: warn
-
-      - name: Upload lint reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: lint-reports
-          path: |
-            app/build/reports/lint-results-*.html
-            app/build/reports/lint-results-*.xml
           if-no-files-found: warn
