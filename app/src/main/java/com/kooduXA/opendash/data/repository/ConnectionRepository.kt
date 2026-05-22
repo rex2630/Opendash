@@ -15,7 +15,10 @@ import com.kooduXA.opendash.data.protocol.AppHttpProtocol
 import com.kooduXA.opendash.data.protocol.CameraProtocol
 import com.kooduXA.opendash.data.protocol.DeviceStatus
 import com.kooduXA.opendash.data.protocol.NovatekCgiProtocol
+import com.kooduXA.opendash.domain.model.CameraEndpoint
 import com.kooduXA.opendash.domain.model.CameraState
+import com.kooduXA.opendash.domain.model.ConnectionMode
+import com.kooduXA.opendash.domain.model.EndpointSource
 import com.kooduXA.opendash.domain.model.VideoFile
 import com.kooduXA.opendash.domain.model.WifiInfo
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -60,22 +63,37 @@ class ConnectionRepository @Inject constructor(
             try {
                 disconnectInternal(clearState = false)
 
-                val manualCameraIp = getManualCameraIp()
+                val settings = settingsRepository.settingsFlow.first()
                 val gatewayIp = getGatewayInfo()?.gatewayIp
+                val candidateEndpoints = buildCandidateEndpoints(
+                    manualCameraIp = settings.cameraIp,
+                    connectionMode = settings.connectionMode,
+                    preferManualFirst = settings.preferManualFirst,
+                    gatewayIp = gatewayIp
+                )
 
-                val candidateIps = if (!manualCameraIp.isNullOrBlank()) {
-                    _connectionState.value = CameraState.Connecting
-                    AppLogger.i(TAG, "Manual camera IP specified, auto-discovery disabled")
-                    listOf(manualCameraIp.trim())
-                } else {
-                    _connectionState.value = CameraState.Scanning
-                    AppLogger.i(TAG, "Starting camera discovery")
-                    buildCandidateIps(gatewayIp)
+                when (settings.connectionMode) {
+                    ConnectionMode.AUTO_DISCOVERY -> {
+                        _connectionState.value = CameraState.Scanning
+                        AppLogger.i(TAG, "Starting auto-discovery only")
+                    }
+
+                    ConnectionMode.MANUAL_IP -> {
+                        _connectionState.value = CameraState.Connecting
+                        AppLogger.i(TAG, "Starting manual IP connection only")
+                    }
+
+                    ConnectionMode.AUTO_WITH_MANUAL_FALLBACK -> {
+                        _connectionState.value = CameraState.Scanning
+                        AppLogger.i(TAG, "Starting hybrid discovery/manual connection flow")
+                    }
                 }
 
-                AppLogger.d(TAG, "Manual IP: $manualCameraIp")
+                AppLogger.d(TAG, "Connection mode: ${settings.connectionMode}")
+                AppLogger.d(TAG, "Manual IP: ${settings.cameraIp}")
+                AppLogger.d(TAG, "Prefer manual first: ${settings.preferManualFirst}")
                 AppLogger.d(TAG, "Gateway IP: $gatewayIp")
-                AppLogger.d(TAG, "Candidate IPs: $candidateIps")
+                AppLogger.d(TAG, "Candidate endpoints: $candidateEndpoints")
 
                 val protocolFactories: List<() -> CameraProtocol> = listOf(
                     { AppHttpProtocol(context) },
@@ -83,22 +101,26 @@ class ConnectionRepository @Inject constructor(
                 )
 
                 var connectedProtocol: CameraProtocol? = null
+                var connectedEndpoint: CameraEndpoint? = null
 
-                outer@ for (ip in candidateIps) {
+                outer@ for (endpoint in candidateEndpoints) {
                     coroutineContext.ensureActive()
                     _connectionState.value = CameraState.Connecting
-                    AppLogger.i(TAG, "Trying IP: $ip")
+                    AppLogger.i(TAG, "Trying endpoint ip=${endpoint.ip} source=${endpoint.source}")
 
                     for (factory in protocolFactories) {
                         val protocol = factory()
-                        AppLogger.d(TAG, "Probing ${protocol.protocolName} on $ip")
+                        AppLogger.d(
+                            TAG,
+                            "Probing ${protocol.protocolName} on ip=${endpoint.ip} source=${endpoint.source}"
+                        )
 
                         val canHandle = try {
-                            protocol.canHandle(ip)
+                            protocol.canHandle(endpoint)
                         } catch (e: Exception) {
                             AppLogger.e(
                                 TAG,
-                                "Probe failed for ${protocol.protocolName} on $ip",
+                                "Probe failed for ${protocol.protocolName} on ${endpoint.ip}",
                                 e
                             )
                             false
@@ -106,18 +128,21 @@ class ConnectionRepository @Inject constructor(
 
                         AppLogger.d(
                             TAG,
-                            "Probe result ${protocol.protocolName} on $ip -> $canHandle"
+                            "Probe result ${protocol.protocolName} on ${endpoint.ip} -> $canHandle"
                         )
 
                         if (!canHandle) continue
 
                         val success = try {
-                            AppLogger.i(TAG, "Connecting ${protocol.protocolName} on $ip")
-                            protocol.connect(ip)
+                            AppLogger.i(
+                                TAG,
+                                "Connecting ${protocol.protocolName} on ${endpoint.ip}"
+                            )
+                            protocol.connect(endpoint)
                         } catch (e: Exception) {
                             AppLogger.e(
                                 TAG,
-                                "Connect failed for ${protocol.protocolName} on $ip",
+                                "Connect failed for ${protocol.protocolName} on ${endpoint.ip}",
                                 e
                             )
                             false
@@ -125,14 +150,15 @@ class ConnectionRepository @Inject constructor(
 
                         AppLogger.d(
                             TAG,
-                            "Connect result ${protocol.protocolName} on $ip -> $success"
+                            "Connect result ${protocol.protocolName} on ${endpoint.ip} -> $success"
                         )
 
                         if (success) {
                             connectedProtocol = protocol
+                            connectedEndpoint = endpoint
                             AppLogger.i(
                                 TAG,
-                                "Connected using ${protocol.protocolName} on $ip"
+                                "Connected using ${protocol.protocolName} on ${endpoint.ip} source=${endpoint.source}"
                             )
                             break@outer
                         }
@@ -142,13 +168,13 @@ class ConnectionRepository @Inject constructor(
                 if (connectedProtocol != null) {
                     _activeProtocol.value = connectedProtocol
                     bindProtocolState(connectedProtocol)
+                    AppLogger.i(TAG, "Active endpoint: $connectedEndpoint")
                 } else {
                     _activeProtocol.value = null
-                    _connectionState.value = if (!manualCameraIp.isNullOrBlank()) {
-                        CameraState.Error("Could not connect to manual IP: $manualCameraIp")
-                    } else {
-                        CameraState.Error("No supported camera found")
-                    }
+                    _connectionState.value = buildConnectionErrorState(
+                        settings.connectionMode,
+                        settings.cameraIp
+                    )
                     AppLogger.w(TAG, "Connection finished: no supported camera found")
                 }
             } catch (e: Exception) {
@@ -191,13 +217,6 @@ class ConnectionRepository @Inject constructor(
         }
     }
 
-    private suspend fun getManualCameraIp(): String? {
-        val ip = settingsRepository.settingsFlow.first().cameraIp.trim()
-        val result = ip.takeIf { it.isNotEmpty() }
-        AppLogger.d(TAG, "Resolved manual camera IP: $result")
-        return result
-    }
-
     @RequiresApi(Build.VERSION_CODES.R)
     private fun getGatewayInfo(): WifiInfo? {
         val connectivityManager =
@@ -238,7 +257,47 @@ class ConnectionRepository @Inject constructor(
         }
     }
 
-    private fun buildCandidateIps(gatewayIp: String?): List<String> {
+    private fun buildCandidateEndpoints(
+        manualCameraIp: String,
+        connectionMode: ConnectionMode,
+        preferManualFirst: Boolean,
+        gatewayIp: String?
+    ): List<CameraEndpoint> {
+        val manualEndpoint = manualCameraIp.trim()
+            .takeIf { it.isNotEmpty() }
+            ?.let {
+                CameraEndpoint(
+                    ip = it,
+                    source = EndpointSource.MANUAL_SETTINGS,
+                    label = "Manual IP"
+                )
+            }
+
+        val autoEndpoints = buildAutoCandidateIps(gatewayIp).map { ip ->
+            CameraEndpoint(
+                ip = ip,
+                source = EndpointSource.AUTO_DISCOVERY,
+                label = "Auto discovery"
+            )
+        }
+
+        val endpoints = when (connectionMode) {
+            ConnectionMode.AUTO_DISCOVERY -> autoEndpoints
+            ConnectionMode.MANUAL_IP -> listOfNotNull(manualEndpoint)
+            ConnectionMode.AUTO_WITH_MANUAL_FALLBACK -> {
+                if (preferManualFirst) {
+                    listOfNotNull(manualEndpoint) + autoEndpoints
+                } else {
+                    autoEndpoints + listOfNotNull(manualEndpoint)
+                }
+            }
+        }.distinctBy { it.ip }
+
+        AppLogger.d(TAG, "Built candidate endpoints: $endpoints")
+        return endpoints
+    }
+
+    private fun buildAutoCandidateIps(gatewayIp: String?): List<String> {
         val candidates = listOf(
             gatewayIp,
             "192.168.169.1",
@@ -254,6 +313,33 @@ class ConnectionRepository @Inject constructor(
 
         AppLogger.d(TAG, "Built auto candidate IP list: $candidates")
         return candidates
+    }
+
+    private fun buildConnectionErrorState(
+        connectionMode: ConnectionMode,
+        manualCameraIp: String
+    ): CameraState.Error {
+        val cleanManualIp = manualCameraIp.trim()
+
+        return when (connectionMode) {
+            ConnectionMode.MANUAL_IP -> {
+                CameraState.Error(
+                    "Could not connect to manual IP: ${cleanManualIp.ifBlank { "not set" }}"
+                )
+            }
+
+            ConnectionMode.AUTO_WITH_MANUAL_FALLBACK -> {
+                CameraState.Error(
+                    if (cleanManualIp.isNotBlank()) {
+                        "No supported camera found via auto-discovery or manual IP: $cleanManualIp"
+                    } else {
+                        "No supported camera found"
+                    }
+                )
+            }
+
+            ConnectionMode.AUTO_DISCOVERY -> CameraState.Error("No supported camera found")
+        }
     }
 
     suspend fun getRecordings(): List<VideoFile> {
