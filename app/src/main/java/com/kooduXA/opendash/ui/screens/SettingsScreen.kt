@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.SettingsEthernet
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Wifi
@@ -61,7 +62,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kooduXA.opendash.R
+import com.kooduXA.opendash.domain.model.ConnectionMode
 
 @Composable
 fun SettingsScreen(
@@ -85,6 +86,10 @@ fun SettingsScreen(
     var showWifiDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showCameraIpDialog by remember { mutableStateOf(false) }
+    var showConnectionModeDialog by remember { mutableStateOf(false) }
+
+    val usesManualIp = settings.connectionMode == ConnectionMode.MANUAL_IP ||
+        settings.connectionMode == ConnectionMode.AUTO_WITH_MANUAL_FALLBACK
 
     Column(
         modifier = Modifier
@@ -102,13 +107,13 @@ fun SettingsScreen(
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.Default.ArrowBack,
-                    contentDescription = stringResource(R.string.settings_back_button_content_description),
+                    contentDescription = "Back",
                     tint = Color.White
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = stringResource(id = R.string.settings_title),
+                text = "Settings",
                 style = MaterialTheme.typography.headlineMedium,
                 color = Color.White
             )
@@ -120,25 +125,25 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             item {
-                SectionHeader(text = stringResource(R.string.settings_section_video_recording))
+                SectionHeader(text = "Video Recording")
                 SettingsGroup {
                     SettingsItem(
                         icon = Icons.Default.HighQuality,
-                        title = stringResource(R.string.settings_resolution_title),
+                        title = "Resolution",
                         subtitle = settings.videoResolution,
                         onClick = { showResolutionDialog = true }
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
                     SwitchItem(
                         icon = Icons.Default.Loop,
-                        title = stringResource(R.string.settings_loop_recording_title),
+                        title = "Loop recording",
                         checked = settings.loopRecording,
                         onCheckedChange = { viewModel.toggleLoopRecording(it) }
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
                     SwitchItem(
                         icon = Icons.Default.Mic,
-                        title = stringResource(R.string.settings_record_audio_title),
+                        title = "Record audio",
                         checked = settings.audioRecording,
                         onCheckedChange = { viewModel.toggleAudio(it) }
                     )
@@ -146,30 +151,52 @@ fun SettingsScreen(
             }
 
             item {
-                SectionHeader(text = stringResource(R.string.settings_section_connectivity))
+                SectionHeader(text = "Connectivity")
                 SettingsGroup {
                     SettingsItem(
                         icon = Icons.Default.Wifi,
-                        title = stringResource(R.string.settings_camera_wifi_title),
-                        subtitle = settings.wifiSSID + stringResource(R.string.settings_camera_wifi_subtitle_tap_to_edit),
+                        title = "Camera Wi‑Fi",
+                        subtitle = "${settings.wifiSSID} · Tap to edit",
                         onClick = { showWifiDialog = true }
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
 
                     SettingsItem(
-                        icon = Icons.Default.Language,
-                        title = stringResource(R.string.settings_camera_ip_title),
-                        subtitle = settings.cameraIp.ifBlank {
-                            stringResource(R.string.settings_camera_ip_auto)
-                        },
-                        onClick = { showCameraIpDialog = true }
+                        icon = Icons.Default.SettingsEthernet,
+                        title = "Connection mode",
+                        subtitle = connectionModeLabel(settings.connectionMode),
+                        onClick = { showConnectionModeDialog = true }
                     )
+
+                    if (usesManualIp) {
+                        Divider(color = Color.DarkGray, thickness = 0.5.dp)
+
+                        SettingsItem(
+                            icon = Icons.Default.Language,
+                            title = "Camera IP",
+                            subtitle = settings.cameraIp.ifBlank { "Not set" },
+                            onClick = { showCameraIpDialog = true }
+                        )
+                    }
+
+                    if (settings.connectionMode == ConnectionMode.AUTO_WITH_MANUAL_FALLBACK) {
+                        Divider(color = Color.DarkGray, thickness = 0.5.dp)
+
+                        SwitchItem(
+                            icon = Icons.Default.SettingsEthernet,
+                            title = "Prefer manual IP first",
+                            subtitle = "Try manual IP before auto discovery",
+                            checked = settings.preferManualFirst,
+                            onCheckedChange = { viewModel.setPreferManualFirst(it) }
+                        )
+                    }
+
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
 
                     SwitchItem(
                         icon = Icons.Default.WifiTethering,
-                        title = stringResource(R.string.settings_auto_connect_title),
-                        subtitle = stringResource(R.string.settings_auto_connect_subtitle),
+                        title = "Auto connect",
+                        subtitle = "Automatically reconnect to the camera Wi‑Fi",
                         checked = settings.wifiAutoConnect,
                         onCheckedChange = { viewModel.toggleAutoConnect(it) }
                     )
@@ -177,12 +204,12 @@ fun SettingsScreen(
             }
 
             item {
-                SectionHeader(text = stringResource(R.string.settings_section_system))
+                SectionHeader(text = "System")
                 SettingsGroup {
                     SettingsItem(
                         icon = Icons.Default.Restore,
-                        title = stringResource(R.string.settings_reset_settings_title),
-                        subtitle = stringResource(R.string.settings_reset_settings_subtitle),
+                        title = "Reset settings",
+                        subtitle = "Restore all app settings to defaults",
                         onClick = { viewModel.resetSettings() },
                         textColor = Color(0xFFEF5350)
                     )
@@ -204,46 +231,43 @@ fun SettingsScreen(
             }
 
             item {
-                SectionHeader(text = stringResource(R.string.about_section_title))
-
+                SectionHeader(text = "About")
                 SettingsGroup {
                     SettingsItem(
                         icon = Icons.Default.Description,
-                        title = stringResource(R.string.about_app_button),
-                        subtitle = stringResource(R.string.about_app_button_subtitle),
+                        title = "About app",
+                        subtitle = "Read app information",
                         onClick = { showAboutDialog = true }
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
 
-                    val githubUrl = stringResource(R.string.github_url)
                     SettingsItem(
                         icon = Icons.Default.Code,
-                        title = stringResource(R.string.github_repo),
-                        subtitle = stringResource(R.string.github_subtitle),
-                        onClick = { openUrl(context, githubUrl) }
+                        title = "GitHub repository",
+                        subtitle = "Open project repository",
+                        onClick = { openUrl(context, context.getString(R.string.github_url)) }
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
 
-                    val emailAddress = stringResource(R.string.contact_email)
                     SettingsItem(
                         icon = Icons.Default.Email,
-                        title = stringResource(R.string.contact_us),
-                        subtitle = stringResource(R.string.contact_subtitle),
-                        onClick = { sendEmail(context, emailAddress) }
+                        title = "Contact us",
+                        subtitle = "Send feedback by email",
+                        onClick = { sendEmail(context, context.getString(R.string.contact_email)) }
                     )
                     Divider(color = Color.DarkGray, thickness = 0.5.dp)
 
                     SettingsItem(
                         icon = Icons.Default.Info,
-                        title = stringResource(R.string.version_title),
-                        subtitle = stringResource(R.string.version_subtitle),
+                        title = "Version",
+                        subtitle = context.getString(R.string.version_subtitle),
                         onClick = { }
                     )
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
                 Text(
-                    text = stringResource(R.string.app_developer_name),
+                    text = context.getString(R.string.app_developer_name),
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.Gray,
@@ -287,10 +311,29 @@ fun SettingsScreen(
         )
     }
 
+    if (showConnectionModeDialog) {
+        ConnectionModeDialog(
+            current = settings.connectionMode,
+            onSelect = {
+                viewModel.setConnectionMode(it)
+                showConnectionModeDialog = false
+            },
+            onDismiss = { showConnectionModeDialog = false }
+        )
+    }
+
     if (showAboutDialog) {
         AboutDialog(
             onDismiss = { showAboutDialog = false }
         )
+    }
+}
+
+private fun connectionModeLabel(mode: ConnectionMode): String {
+    return when (mode) {
+        ConnectionMode.AUTO_DISCOVERY -> "Auto discovery"
+        ConnectionMode.MANUAL_IP -> "Manual IP"
+        ConnectionMode.AUTO_WITH_MANUAL_FALLBACK -> "Auto with manual fallback"
     }
 }
 
@@ -438,16 +481,16 @@ fun ResolutionSelectionDialog(
     onDismiss: () -> Unit
 ) {
     val options = listOf(
-        stringResource(R.string.settings_resolution_4k_30fps),
-        stringResource(R.string.settings_resolution_2k_60fps),
-        stringResource(R.string.settings_resolution_1080p_60fps),
-        stringResource(R.string.settings_resolution_1080p_30fps),
-        stringResource(R.string.settings_resolution_720p_30fps)
+        "4K 30fps",
+        "2K 60fps",
+        "1080p 60fps",
+        "1080p 30fps",
+        "720p 30fps"
     )
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_dialog_select_resolution_title)) },
+        title = { Text("Select resolution") },
         text = {
             Column {
                 options.forEach { option ->
@@ -467,7 +510,61 @@ fun ResolutionSelectionDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.dialog_cancel_button))
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun ConnectionModeDialog(
+    current: ConnectionMode,
+    onSelect: (ConnectionMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        ConnectionMode.AUTO_DISCOVERY,
+        ConnectionMode.MANUAL_IP,
+        ConnectionMode.AUTO_WITH_MANUAL_FALLBACK
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Connection mode") },
+        text = {
+            Column {
+                options.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(option) }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = option == current, onClick = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(connectionModeLabel(option))
+                            Text(
+                                text = when (option) {
+                                    ConnectionMode.AUTO_DISCOVERY ->
+                                        "Search camera automatically on the network"
+                                    ConnectionMode.MANUAL_IP ->
+                                        "Always connect using the configured IP address"
+                                    ConnectionMode.AUTO_WITH_MANUAL_FALLBACK ->
+                                        "Combine discovery with a saved manual IP"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
             }
         }
     )
@@ -486,13 +583,13 @@ fun WifiEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_dialog_camera_wifi_setup_title)) },
+        title = { Text("Camera Wi‑Fi setup") },
         text = {
             Column {
                 OutlinedTextField(
                     value = ssid,
                     onValueChange = { ssid = it },
-                    label = { Text(stringResource(R.string.settings_dialog_ssid_name_label)) },
+                    label = { Text("SSID name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -500,7 +597,7 @@ fun WifiEditDialog(
                 OutlinedTextField(
                     value = pass,
                     onValueChange = { pass = it },
-                    label = { Text(stringResource(R.string.settings_dialog_password_label)) },
+                    label = { Text("Password") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     visualTransformation = if (passwordVisible) {
@@ -517,9 +614,9 @@ fun WifiEditDialog(
                                     Icons.Default.Visibility
                                 },
                                 contentDescription = if (passwordVisible) {
-                                    stringResource(R.string.settings_hide_password)
+                                    "Hide password"
                                 } else {
-                                    stringResource(R.string.settings_show_password)
+                                    "Show password"
                                 }
                             )
                         }
@@ -529,12 +626,12 @@ fun WifiEditDialog(
         },
         confirmButton = {
             Button(onClick = { onSave(ssid.trim(), pass) }) {
-                Text(stringResource(R.string.dialog_save_button))
+                Text("Save")
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.dialog_cancel_button))
+                Text("Cancel")
             }
         }
     )
@@ -550,11 +647,11 @@ fun CameraIpDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_camera_ip_title)) },
+        title = { Text("Camera IP") },
         text = {
             Column {
                 Text(
-                    text = stringResource(R.string.settings_camera_ip_description),
+                    text = "Enter the manual IP address used for direct camera connection.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
@@ -562,7 +659,7 @@ fun CameraIpDialog(
                 OutlinedTextField(
                     value = ip,
                     onValueChange = { ip = it },
-                    label = { Text(stringResource(R.string.settings_camera_ip_hint)) },
+                    label = { Text("192.168.x.x") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -570,12 +667,12 @@ fun CameraIpDialog(
         },
         confirmButton = {
             Button(onClick = { onSave(ip.trim()) }) {
-                Text(stringResource(R.string.dialog_save_button))
+                Text("Save")
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.dialog_cancel_button))
+                Text("Cancel")
             }
         }
     )
@@ -585,11 +682,11 @@ fun CameraIpDialog(
 fun AboutDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(text = stringResource(R.string.about_app_button)) },
+        title = { Text(text = "About app") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    text = stringResource(R.string.app_description),
+                    text = "OpenDash is an application for camera control and dashcam workflows.",
                     style = MaterialTheme.typography.bodyMedium,
                     lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.3
                 )
@@ -597,7 +694,7 @@ fun AboutDialog(onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.close))
+                Text("Close")
             }
         }
     )
