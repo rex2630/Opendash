@@ -39,11 +39,18 @@ class AppHttpProtocol(
     private val protocolScope = CoroutineScope(Job() + Dispatchers.IO)
     private var heartbeatJob: Job? = null
 
-    private val client = OkHttpClient.Builder()
+    private val fastClient = OkHttpClient.Builder()
         .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(3, TimeUnit.SECONDS)
         .writeTimeout(3, TimeUnit.SECONDS)
         .callTimeout(5, TimeUnit.SECONDS)
+        .build()
+
+    private val slowClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .writeTimeout(12, TimeUnit.SECONDS)
+        .callTimeout(15, TimeUnit.SECONDS)
         .build()
 
     private val candidateBasePaths = listOf(
@@ -52,13 +59,11 @@ class AppHttpProtocol(
         emptyList()
     )
 
-    private val probeRequests = listOf(
+    private val lightweightProbeRequests = listOf(
         ProbeRequest("getdeviceattr"),
-        ProbeRequest("getparamitems", mapOf("param" to "all")),
-        ProbeRequest("getparamvalue", mapOf("param" to "rec")),
         ProbeRequest("getsdinfo"),
-        ProbeRequest("getmediainfo"),
-        ProbeRequest("enterrecorder")
+        ProbeRequest("getparamvalue", mapOf("param" to "all")),
+        ProbeRequest("getparamitems", mapOf("param" to "all"))
     )
 
     override suspend fun canHandle(endpoint: CameraEndpoint): Boolean = withContext(Dispatchers.IO) {
@@ -80,7 +85,7 @@ class AppHttpProtocol(
 
         val discoveredBasePath = discoverWorkingBasePath(ip)
         if (discoveredBasePath == null) {
-            AppLogger.e(TAG, "APP API handshake failed on $ip")
+            AppLogger.e(TAG, "APP API handshake failed on $ip: no working base path")
             _connectionState.value = CameraState.Error("APP API handshake failed on $ip")
             currentEndpoint = null
             return@withContext false
@@ -89,24 +94,28 @@ class AppHttpProtocol(
         appBasePath = discoveredBasePath
 
         val attr = sendAppCommand("getdeviceattr")
-        val items = sendAppCommand("getparamitems", mapOf("param" to "all"))
-        val rec = sendAppCommand("getparamvalue", mapOf("param" to "rec"))
         val sd = sendAppCommand("getsdinfo")
-        val media = sendAppCommand("getmediainfo")
-        val enterRecorder = sendAppCommand("enterrecorder")
+        val items = sendAppCommand("getparamitems", mapOf("param" to "all"))
+        val valuesAll = sendAppCommand("getparamvalue", mapOf("param" to "all"))
+        val rec = sendAppCommand("getparamvalue", mapOf("param" to "rec"))
         val timeSync = syncTime()
+        val enterRecorder = enterRecorder()
+        val media = sendAppCommand("getmediainfo", client = slowClient)
 
         AppLogger.d(TAG, "Connected APP basePath=${appBasePath.joinToString("/")}")
         AppLogger.d(TAG, "getdeviceattr=$attr")
-        AppLogger.d(TAG, "getparamitems=$items")
-        AppLogger.d(TAG, "getparamvalue(rec)=$rec")
         AppLogger.d(TAG, "getsdinfo=$sd")
+        AppLogger.d(TAG, "getparamitems=$items")
+        AppLogger.d(TAG, "getparamvalue(all)=$valuesAll")
+        AppLogger.d(TAG, "getparamvalue(rec)=$rec")
         AppLogger.d(TAG, "getmediainfo=$media")
         AppLogger.d(TAG, "enterrecorder=$enterRecorder")
         AppLogger.d(TAG, "setsystime=$timeSync")
 
-        val success = listOf(attr, items, rec, sd, media, enterRecorder).any { !it.isNullOrBlank() }
-        if (!success) {
+        val hasPrimaryHandshake = looksLikeSuccess(attr)
+        val hasSecondarySignal = listOf(sd, items, valuesAll, rec, media, enterRecorder).any(::looksLikeUsableResponse)
+
+        if (!hasPrimaryHandshake && !hasSecondarySignal) {
             AppLogger.e(TAG, "APP API handshake returned no usable data for $ip")
             _connectionState.value = CameraState.Error("APP API handshake failed on $ip")
             currentEndpoint = null
@@ -166,9 +175,9 @@ class AppHttpProtocol(
     }
 
     override suspend fun startRecording(): Boolean = withContext(Dispatchers.IO) {
-        val result = sendAppCommand("setparamvalue", mapOf("param" to "rec", "value" to "1"))
+        val result = enterRecorder()
+            ?: sendAppCommand("setparamvalue", mapOf("param" to "rec", "value" to "1"))
             ?: sendAppCommand("startrecord")
-            ?: sendAppCommand("enterrecorder")
 
         AppLogger.d(TAG, "startRecording result=$result")
         isSuccess(result)
@@ -183,7 +192,8 @@ class AppHttpProtocol(
     }
 
     override suspend fun takePhoto(): Boolean = withContext(Dispatchers.IO) {
-        val result = sendAppCommand("capture")
+        val result = enterRecorder()
+            ?: sendAppCommand("capture")
             ?: sendAppCommand("takephoto")
 
         AppLogger.d(TAG, "takePhoto result=$result")
@@ -199,10 +209,31 @@ class AppHttpProtocol(
     }
 
     override suspend fun getFileList(): List<VideoFile> = withContext(Dispatchers.IO) {
-        val mediaInfo = sendAppCommand("getmediainfo") ?: return@withContext emptyList()
-        val files = parseMediaInfo(mediaInfo)
+        val files = mutableListOf<VideoFile>()
+
+        val playbackEnter = enterPlayback()
+        AppLogger.d(TAG, "getFileList enterPlayback=$playbackEnter")
+
+        val fileListResponse = sendAppCommand("getfilelist", client = slowClient)
+        if (!fileListResponse.isNullOrBlank()) {
+            files += parseFileList(fileListResponse)
+        }
+
+        if (files.isEmpty()) {
+            val mediaInfo = sendAppCommand("getmediainfo", client = slowClient)
+            if (!mediaInfo.isNullOrBlank()) {
+                files += parseMediaInfo(mediaInfo)
+            }
+        }
+
+        val playbackExit = exitPlayback()
+        val recorderBack = enterRecorder()
+
+        AppLogger.d(TAG, "getFileList exitPlayback=$playbackExit")
+        AppLogger.d(TAG, "getFileList enterRecorder=$recorderBack")
         AppLogger.d(TAG, "getFileList parsed ${files.size} files")
-        files
+
+        files.distinctBy { it.filename }
     }
 
     override suspend fun deleteFile(filename: String): Boolean = withContext(Dispatchers.IO) {
@@ -260,8 +291,11 @@ class AppHttpProtocol(
     }
 
     suspend fun setWifiCredentials(ssid: String, pass: String): Boolean = withContext(Dispatchers.IO) {
-        val result = sendAppCommand("setwifi", mapOf("ssid" to ssid, "pwd" to pass))
+        val result = enterSettings()
+            ?: sendAppCommand("setwifi", mapOf("ssid" to ssid, "pwd" to pass))
             ?: sendAppCommand("setapinfo", mapOf("ssid" to ssid, "pwd" to pass))
+
+        exitSettings()
 
         AppLogger.d(TAG, "setWifiCredentials ssid=$ssid result=$result")
         isSuccess(result)
@@ -269,22 +303,22 @@ class AppHttpProtocol(
 
     private suspend fun discoverWorkingBasePath(ip: String): List<String>? = withContext(Dispatchers.IO) {
         for (basePath in candidateBasePaths) {
-            for (probe in probeRequests) {
-                val response = simpleGet(
-                    buildUrl(
-                        ip = ip,
-                        basePath = basePath,
-                        path = probe.path,
-                        query = probe.query
-                    )
+            for (probe in lightweightProbeRequests) {
+                val url = buildUrl(
+                    ip = ip,
+                    basePath = basePath,
+                    path = probe.path,
+                    query = probe.query
                 )
+
+                val response = simpleGet(url, fastClient)
 
                 AppLogger.d(
                     TAG,
-                    "APP probe ip=$ip base=${basePath.joinToString("/")} path=${probe.path} -> ${response?.take(160)}"
+                    "APP probe ip=$ip base=${basePath.joinToString("/")} path=${probe.path} url=$url -> ${response?.take(160)}"
                 )
 
-                if (!response.isNullOrBlank()) {
+                if (looksLikeUsableResponse(response)) {
                     return@withContext basePath
                 }
             }
@@ -294,11 +328,37 @@ class AppHttpProtocol(
 
     private fun sendAppCommand(
         path: String,
-        query: Map<String, String> = emptyMap()
+        query: Map<String, String> = emptyMap(),
+        client: OkHttpClient = fastClient
     ): String? {
         val ip = requireCurrentIp()
         val url = buildUrl(ip = ip, basePath = appBasePath, path = path, query = query)
-        return simpleGet(url)
+        return simpleGet(url, client)
+    }
+
+    private suspend fun enterPlayback(): String? {
+        return sendAppCommand("playback", mapOf("param" to "enter"), client = slowClient)
+    }
+
+    private suspend fun exitPlayback(): String? {
+        return sendAppCommand("playback", mapOf("param" to "exit"), client = slowClient)
+    }
+
+    private suspend fun enterRecorder(): String? {
+        return sendAppCommand("enterrecorder")
+            ?: sendAppCommand("setparamvalue", mapOf("param" to "rec", "value" to "1"))
+    }
+
+    private suspend fun exitRecorder(): String? {
+        return sendAppCommand("exitrecorder")
+    }
+
+    private suspend fun enterSettings(): String? {
+        return sendAppCommand("setting", mapOf("param" to "enter"))
+    }
+
+    private suspend fun exitSettings(): String? {
+        return sendAppCommand("setting", mapOf("param" to "exit"))
     }
 
     private fun buildUrl(
@@ -330,7 +390,7 @@ class AppHttpProtocol(
         return builder.build()
     }
 
-    private fun simpleGet(url: HttpUrl): String? {
+    private fun simpleGet(url: HttpUrl, client: OkHttpClient): String? {
         return try {
             val request = Request.Builder()
                 .url(url)
@@ -352,37 +412,103 @@ class AppHttpProtocol(
 
     private fun syncTime(): String? {
         val value = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(Date())
-        return sendAppCommand("setsystime", mapOf("date" to value))
+        return sendAppCommand("setsystime", mapOf("date" to value), client = slowClient)
+    }
+
+    private fun looksLikeSuccess(result: String?): Boolean {
+        if (result.isNullOrBlank()) return false
+        return result.contains("\"result\":0") ||
+            result.contains("\"result\":\"0\"") ||
+            result.contains("ok", true) ||
+            result.contains("success", true)
+    }
+
+    private fun looksLikeUsableResponse(result: String?): Boolean {
+        if (result.isNullOrBlank()) return false
+        if (result.contains("error", true)) return false
+        return true
     }
 
     private fun isSuccess(result: String?): Boolean {
         if (result.isNullOrBlank()) return false
         return result.contains("ok", true) ||
             result.contains("success", true) ||
+            result.contains("\"result\":0") ||
+            result.contains("\"result\":\"0\"") ||
             result.contains("200") ||
             !result.contains("error", true)
+    }
+
+    private fun parseFileList(raw: String): List<VideoFile> {
+        val ip = requireCurrentIp()
+        val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+        val absolutePathRegex = Regex("""(/mnt/sdcard/[A-Za-z0-9_/\-\.]+)""", RegexOption.IGNORE_CASE)
+        val filenameRegex = Regex("""([A-Za-z0-9_\-]+\.(mp4|mov|ts|avi|jpg))""", RegexOption.IGNORE_CASE)
+        val sizeRegex = Regex("""(?:size|filesize)[=:](\d+)""", RegexOption.IGNORE_CASE)
+        val timeRegex = Regex("""(?:time|date)[=:]([^\n,]+)""", RegexOption.IGNORE_CASE)
+
+        return lines.mapNotNull { line ->
+            val absolutePath = absolutePathRegex.find(line)?.groupValues?.getOrNull(1)
+            val filename = absolutePath?.substringAfterLast("/")
+                ?: filenameRegex.find(line)?.groupValues?.getOrNull(1)
+                ?: return@mapNotNull null
+
+            val sizeBytes = sizeRegex.find(line)?.groupValues?.getOrNull(1)?.toLongOrNull()
+            val time = timeRegex.find(line)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+
+            VideoFile(
+                filename = filename,
+                downloadUrl = absolutePath?.let { buildDownloadUrlForPath(ip, it) }
+                    ?: "http://$ip/DCIM/$filename",
+                thumbnailUrl = absolutePath?.let { buildThumbnailUrl(ip, it) }
+                    ?: "http://$ip/DCIM/$filename",
+                size = sizeBytes?.let { formatBytes(it) } ?: "",
+                time = if (time.isNotBlank()) time else "Unknown date"
+            )
+        }.distinctBy { it.filename }
     }
 
     private fun parseMediaInfo(raw: String): List<VideoFile> {
         val ip = requireCurrentIp()
         val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
         val fileRegex = Regex("""([A-Za-z0-9_\-]+\.(mp4|mov|ts|avi|jpg))""", RegexOption.IGNORE_CASE)
+        val absolutePathRegex = Regex("""(/mnt/sdcard/[A-Za-z0-9_/\-\.]+)""", RegexOption.IGNORE_CASE)
         val sizeRegex = Regex("""size[=:](\d+)""", RegexOption.IGNORE_CASE)
         val timeRegex = Regex("""time[=:]([^\n,]+)""", RegexOption.IGNORE_CASE)
 
         return lines.mapNotNull { line ->
-            val filename = fileRegex.find(line)?.groupValues?.getOrNull(1) ?: return@mapNotNull null
+            val absolutePath = absolutePathRegex.find(line)?.groupValues?.getOrNull(1)
+            val filename = absolutePath?.substringAfterLast("/")
+                ?: fileRegex.find(line)?.groupValues?.getOrNull(1)
+                ?: return@mapNotNull null
+
             val sizeBytes = sizeRegex.find(line)?.groupValues?.getOrNull(1)?.toLongOrNull()
             val time = timeRegex.find(line)?.groupValues?.getOrNull(1)?.trim().orEmpty()
 
             VideoFile(
                 filename = filename,
-                downloadUrl = "http://$ip/DCIM/$filename",
-                thumbnailUrl = "http://$ip/DCIM/$filename",
+                downloadUrl = absolutePath?.let { buildDownloadUrlForPath(ip, it) }
+                    ?: "http://$ip/DCIM/$filename",
+                thumbnailUrl = absolutePath?.let { buildThumbnailUrl(ip, it) }
+                    ?: "http://$ip/DCIM/$filename",
                 size = sizeBytes?.let { formatBytes(it) } ?: "",
                 time = if (time.isNotBlank()) time else "Unknown date"
             )
         }.distinctBy { it.filename }
+    }
+
+    private fun buildDownloadUrlForPath(ip: String, absolutePath: String): String {
+        return "http://$ip$absolutePath"
+    }
+
+    private fun buildThumbnailUrl(ip: String, absolutePath: String): String {
+        return buildUrl(
+            ip = ip,
+            basePath = appBasePath,
+            path = "getthumbnail",
+            query = mapOf("file" to absolutePath)
+        ).toString()
     }
 
     private fun requireCurrentIp(): String {
