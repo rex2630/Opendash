@@ -2,6 +2,7 @@ package com.kooduXA.opendash.data.protocol
 
 import android.content.Context
 import android.util.Log
+import com.kooduXA.opendash.domain.model.CameraEndpoint
 import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.StorageInfo
 import com.kooduXA.opendash.domain.model.VideoFile
@@ -30,8 +31,8 @@ class NovatekCgiProtocol(
 
     override val protocolName: String = "Novatek CGI"
 
-    private var cameraIp: String = "192.168.0.1"
-    private var baseCgiUrl: String = "http://192.168.0.1/cgi-bin/Config.cgi"
+    private var currentEndpoint: CameraEndpoint? = null
+    private var baseCgiUrl: String? = null
     private var liveRtspUrl: String? = null
 
     private val _connectionState = MutableStateFlow<CameraState>(CameraState.Disconnected)
@@ -60,22 +61,26 @@ class NovatekCgiProtocol(
         "action=dir&property=Normal&format=all&count=1&from=0"
     )
 
-    override suspend fun canHandle(ipAddress: String): Boolean = withContext(Dispatchers.IO) {
-        discoverWorkingBaseUrl(ipAddress) != null
+    override suspend fun canHandle(endpoint: CameraEndpoint): Boolean = withContext(Dispatchers.IO) {
+        discoverWorkingBaseUrl(endpoint.ip.trim()) != null
     }
 
-    override suspend fun connect(ipAddress: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun connect(endpoint: CameraEndpoint): Boolean = withContext(Dispatchers.IO) {
         heartbeatJob?.cancel()
         liveRtspUrl = null
-        cameraIp = ipAddress.trim()
+
+        val ip = endpoint.ip.trim()
+        currentEndpoint = endpoint.copy(ip = ip)
 
         _connectionState.value = CameraState.Connecting
-        Log.d(TAG, "Trying Novatek CGI on $cameraIp")
+        Log.d(TAG, "Trying Novatek CGI on $ip")
 
-        val discoveredBase = discoverWorkingBaseUrl(cameraIp)
+        val discoveredBase = discoverWorkingBaseUrl(ip)
         if (discoveredBase == null) {
-            Log.w(TAG, "No Novatek CGI endpoint found on $cameraIp")
-            _connectionState.value = CameraState.Error("Novatek handshake failed on $cameraIp")
+            Log.w(TAG, "No Novatek CGI endpoint found on $ip")
+            _connectionState.value = CameraState.Error("Novatek handshake failed on $ip")
+            currentEndpoint = null
+            baseCgiUrl = null
             return@withContext false
         }
 
@@ -92,7 +97,7 @@ class NovatekCgiProtocol(
         if (liveRtspUrl.isNullOrBlank()) {
             liveRtspUrl = discoverRtspUrl()
         }
-        liveRtspUrl ?: "rtsp://$cameraIp/liveRTSP/av4"
+        liveRtspUrl ?: "rtsp://${requireCurrentIp()}/liveRTSP/av4"
     }
 
     override suspend fun startHeartbeat() = withContext(Dispatchers.IO) {
@@ -142,6 +147,8 @@ class NovatekCgiProtocol(
         heartbeatJob?.cancel()
         heartbeatJob = null
         liveRtspUrl = null
+        baseCgiUrl = null
+        currentEndpoint = null
         _connectionState.value = CameraState.Disconnected
     }
 
@@ -152,10 +159,11 @@ class NovatekCgiProtocol(
     }
 
     override suspend fun deleteFile(filename: String): Boolean = withContext(Dispatchers.IO) {
+        val currentIp = requireCurrentIp()
         var finalPath = filename.trim()
 
         if (finalPath.startsWith("http://") || finalPath.startsWith("https://")) {
-            finalPath = finalPath.substringAfter(cameraIp, finalPath)
+            finalPath = finalPath.substringAfter(currentIp, finalPath)
         }
 
         if (!finalPath.startsWith("/")) {
@@ -236,6 +244,7 @@ class NovatekCgiProtocol(
     }
 
     private suspend fun discoverRtspUrl(): String? = withContext(Dispatchers.IO) {
+        val ip = requireCurrentIp()
         val avResponse = sendCgiCommand("action=get&property=Camera.Preview.RTSP.av")
         val avValue = avResponse
             ?.substringAfter("av=", "")
@@ -265,15 +274,16 @@ class NovatekCgiProtocol(
         }.distinct()
 
         for (path in pathCandidates) {
-            if (isRtspReachable(cameraIp, 554, path)) {
-                return@withContext "rtsp://$cameraIp/$path"
+            if (isRtspReachable(ip, 554, path)) {
+                return@withContext "rtsp://$ip/$path"
             }
         }
         null
     }
 
     private fun sendCgiCommand(query: String, returnCode: Boolean = false): String? {
-        return sendCgiCommandToBase(baseCgiUrl, query, returnCode)
+        val baseUrl = baseCgiUrl ?: return null
+        return sendCgiCommandToBase(baseUrl, query, returnCode)
     }
 
     private fun sendCgiCommandToBase(
@@ -340,6 +350,7 @@ class NovatekCgiProtocol(
     }
 
     private fun parseFileList(raw: String): List<VideoFile> {
+        val ip = requireCurrentIp()
         val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
 
         val fileRegex = Regex("""([A-Za-z0-9_\-]+\.(mp4|mov|ts|avi))""", RegexOption.IGNORE_CASE)
@@ -357,9 +368,9 @@ class NovatekCgiProtocol(
 
             val fullPath = pathRegex.find(line)?.value
             val url = if (fullPath != null) {
-                "http://$cameraIp$fullPath"
+                "http://$ip$fullPath"
             } else {
-                "http://$cameraIp/DCIM/$fileName"
+                "http://$ip/DCIM/$fileName"
             }
 
             val sizeBytes = sizeRegex.find(line)?.groupValues?.getOrNull(1)?.toLongOrNull()
@@ -375,6 +386,11 @@ class NovatekCgiProtocol(
         }
 
         return results.distinctBy { it.filename }
+    }
+
+    private fun requireCurrentIp(): String {
+        return currentEndpoint?.ip?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("NovatekCgiProtocol is not connected to any endpoint")
     }
 
     private fun formatBytes(bytes: Long): String {
