@@ -60,12 +60,18 @@ class ConnectionRepository @Inject constructor(
             try {
                 disconnectInternal(clearState = false)
 
-                _connectionState.value = CameraState.Scanning
-                AppLogger.i(TAG, "Starting camera discovery")
-
                 val manualCameraIp = getManualCameraIp()
                 val gatewayIp = getGatewayInfo()?.gatewayIp
-                val candidateIps = buildCandidateIps(manualCameraIp, gatewayIp)
+
+                val candidateIps = if (!manualCameraIp.isNullOrBlank()) {
+                    _connectionState.value = CameraState.Connecting
+                    AppLogger.i(TAG, "Manual camera IP specified, auto-discovery disabled")
+                    listOf(manualCameraIp.trim())
+                } else {
+                    _connectionState.value = CameraState.Scanning
+                    AppLogger.i(TAG, "Starting camera discovery")
+                    buildCandidateIps(gatewayIp)
+                }
 
                 AppLogger.d(TAG, "Manual IP: $manualCameraIp")
                 AppLogger.d(TAG, "Gateway IP: $gatewayIp")
@@ -138,8 +144,12 @@ class ConnectionRepository @Inject constructor(
                     bindProtocolState(connectedProtocol)
                 } else {
                     _activeProtocol.value = null
-                    _connectionState.value = CameraState.Error("No supported camera found")
-                    AppLogger.w(TAG, "Discovery finished: no supported camera found")
+                    _connectionState.value = if (!manualCameraIp.isNullOrBlank()) {
+                        CameraState.Error("Could not connect to manual IP: $manualCameraIp")
+                    } else {
+                        CameraState.Error("No supported camera found")
+                    }
+                    AppLogger.w(TAG, "Connection finished: no supported camera found")
                 }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "startDiscovery failed", e)
@@ -228,12 +238,8 @@ class ConnectionRepository @Inject constructor(
         }
     }
 
-    private fun buildCandidateIps(
-        manualIp: String?,
-        gatewayIp: String?
-    ): List<String> {
+    private fun buildCandidateIps(gatewayIp: String?): List<String> {
         val candidates = listOf(
-            manualIp,
             gatewayIp,
             "192.168.169.1",
             "192.168.0.1",
@@ -246,7 +252,7 @@ class ConnectionRepository @Inject constructor(
             .filter { it.isNotEmpty() }
             .distinct()
 
-        AppLogger.d(TAG, "Built candidate IP list: $candidates")
+        AppLogger.d(TAG, "Built auto candidate IP list: $candidates")
         return candidates
     }
 
