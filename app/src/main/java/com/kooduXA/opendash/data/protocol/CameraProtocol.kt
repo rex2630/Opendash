@@ -1,5 +1,6 @@
 package com.kooduXA.opendash.data.protocol
 
+import com.kooduXA.opendash.domain.model.CameraEndpoint
 import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.StorageInfo
 import com.kooduXA.opendash.domain.model.VideoFile
@@ -10,15 +11,15 @@ interface CameraProtocol {
     val connectionState: StateFlow<CameraState>
 
     /**
-     * Lightweight probe used during discovery.
-     * Should return true only when this protocol recognizes the camera at the given IP.
+     * Lightweight probe used during discovery or manual connection validation.
+     * Should return true only when this protocol recognizes the camera at the given endpoint.
      */
-    suspend fun canHandle(ipAddress: String): Boolean
+    suspend fun canHandle(endpoint: CameraEndpoint): Boolean
 
     /**
      * Establishes a working session after a successful probe.
      */
-    suspend fun connect(ipAddress: String): Boolean
+    suspend fun connect(endpoint: CameraEndpoint): Boolean
 
     suspend fun getLiveStreamUrl(): String
     suspend fun startHeartbeat()
