@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kooduXA.opendash.data.repository.ConnectionRepository
 import com.kooduXA.opendash.data.repository.SettingsRepository
+import com.kooduXA.opendash.domain.model.ConnectionMode
 import com.kooduXA.opendash.domain.model.StorageInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,6 +56,8 @@ class SettingsViewModel @Inject constructor(
                     "wifiPassword" -> current.copy(wifiPassword = value as String)
                     "wifiAutoConnect" -> current.copy(wifiAutoConnect = value as Boolean)
                     "cameraIp" -> current.copy(cameraIp = value as String)
+                    "connectionMode" -> current.copy(connectionMode = value as ConnectionMode)
+                    "preferManualFirst" -> current.copy(preferManualFirst = value as Boolean)
                     else -> current
                 }
 
@@ -135,7 +138,19 @@ class SettingsViewModel @Inject constructor(
 
     fun updateCameraIp(ip: String) {
         viewModelScope.launch {
-            repository.updateSettings(settings.value.copy(cameraIp = ip))
+            repository.updateSettings(settings.value.copy(cameraIp = ip.trim()))
+        }
+    }
+
+    fun setConnectionMode(mode: ConnectionMode) {
+        viewModelScope.launch {
+            repository.updateSettings(settings.value.copy(connectionMode = mode))
+        }
+    }
+
+    fun setPreferManualFirst(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings(settings.value.copy(preferManualFirst = enabled))
         }
     }
 
@@ -159,7 +174,6 @@ class SettingsViewModel @Inject constructor(
                     wifiPassword = pass
                 )
             )
-
             connectionRepository.updateWifi(ssid, pass)
         }
     }
