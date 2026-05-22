@@ -2,6 +2,7 @@ package com.kooduXA.opendash.data.protocol
 
 import android.content.Context
 import com.kooduXA.opendash.data.debug.AppLogger
+import com.kooduXA.opendash.domain.model.CameraEndpoint
 import com.kooduXA.opendash.domain.model.CameraState
 import com.kooduXA.opendash.domain.model.StorageInfo
 import com.kooduXA.opendash.domain.model.VideoFile
@@ -29,7 +30,7 @@ class AppHttpProtocol(
 
     override val protocolName: String = "APP HTTP"
 
-    private var cameraIp: String = "192.168.169.1"
+    private var currentEndpoint: CameraEndpoint? = null
     private var appBasePath: List<String> = listOf("app")
 
     private val _connectionState = MutableStateFlow<CameraState>(CameraState.Disconnected)
@@ -60,8 +61,8 @@ class AppHttpProtocol(
         ProbeRequest("enterrecorder")
     )
 
-    override suspend fun canHandle(ipAddress: String): Boolean = withContext(Dispatchers.IO) {
-        val ip = ipAddress.trim()
+    override suspend fun canHandle(endpoint: CameraEndpoint): Boolean = withContext(Dispatchers.IO) {
+        val ip = endpoint.ip.trim()
         val discovered = discoverWorkingBasePath(ip)
 
         AppLogger.d(TAG, "canHandle ip=$ip -> basePath=${discovered?.joinToString("/")}")
@@ -69,17 +70,19 @@ class AppHttpProtocol(
         discovered != null
     }
 
-    override suspend fun connect(ipAddress: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun connect(endpoint: CameraEndpoint): Boolean = withContext(Dispatchers.IO) {
         heartbeatJob?.cancel()
 
-        cameraIp = ipAddress.trim()
+        val ip = endpoint.ip.trim()
+        currentEndpoint = endpoint.copy(ip = ip)
         _connectionState.value = CameraState.Connecting
-        AppLogger.i(TAG, "Connecting to camera at $cameraIp")
+        AppLogger.i(TAG, "Connecting to camera at $ip")
 
-        val discoveredBasePath = discoverWorkingBasePath(cameraIp)
+        val discoveredBasePath = discoverWorkingBasePath(ip)
         if (discoveredBasePath == null) {
-            AppLogger.e(TAG, "APP API handshake failed on $cameraIp")
-            _connectionState.value = CameraState.Error("APP API handshake failed on $cameraIp")
+            AppLogger.e(TAG, "APP API handshake failed on $ip")
+            _connectionState.value = CameraState.Error("APP API handshake failed on $ip")
+            currentEndpoint = null
             return@withContext false
         }
 
@@ -104,8 +107,9 @@ class AppHttpProtocol(
 
         val success = listOf(attr, items, rec, sd, media, enterRecorder).any { !it.isNullOrBlank() }
         if (!success) {
-            AppLogger.e(TAG, "APP API handshake returned no usable data for $cameraIp")
-            _connectionState.value = CameraState.Error("APP API handshake failed on $cameraIp")
+            AppLogger.e(TAG, "APP API handshake returned no usable data for $ip")
+            _connectionState.value = CameraState.Error("APP API handshake failed on $ip")
+            currentEndpoint = null
             return@withContext false
         }
 
@@ -116,14 +120,15 @@ class AppHttpProtocol(
     }
 
     override suspend fun getLiveStreamUrl(): String = withContext(Dispatchers.IO) {
+        val ip = requireCurrentIp()
         listOf(
-            "rtsp://$cameraIp/liveRTSP/av4",
-            "rtsp://$cameraIp/liveRTSP/av2",
-            "rtsp://$cameraIp/liveRTSP/av1",
-            "rtsp://$cameraIp/live",
-            "rtsp://$cameraIp/stream0",
-            "http://$cameraIp/live",
-            "http://$cameraIp:8080/?action=stream"
+            "rtsp://$ip/liveRTSP/av4",
+            "rtsp://$ip/liveRTSP/av2",
+            "rtsp://$ip/liveRTSP/av1",
+            "rtsp://$ip/live",
+            "rtsp://$ip/stream0",
+            "http://$ip/live",
+            "http://$ip:8080/?action=stream"
         ).first()
     }
 
@@ -188,6 +193,7 @@ class AppHttpProtocol(
     override fun disconnect() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        currentEndpoint = null
         _connectionState.value = CameraState.Disconnected
         AppLogger.i(TAG, "Camera disconnected")
     }
@@ -290,7 +296,8 @@ class AppHttpProtocol(
         path: String,
         query: Map<String, String> = emptyMap()
     ): String? {
-        val url = buildUrl(ip = cameraIp, basePath = appBasePath, path = path, query = query)
+        val ip = requireCurrentIp()
+        val url = buildUrl(ip = ip, basePath = appBasePath, path = path, query = query)
         return simpleGet(url)
     }
 
@@ -357,6 +364,7 @@ class AppHttpProtocol(
     }
 
     private fun parseMediaInfo(raw: String): List<VideoFile> {
+        val ip = requireCurrentIp()
         val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
         val fileRegex = Regex("""([A-Za-z0-9_\-]+\.(mp4|mov|ts|avi|jpg))""", RegexOption.IGNORE_CASE)
         val sizeRegex = Regex("""size[=:](\d+)""", RegexOption.IGNORE_CASE)
@@ -369,12 +377,17 @@ class AppHttpProtocol(
 
             VideoFile(
                 filename = filename,
-                downloadUrl = "http://$cameraIp/DCIM/$filename",
-                thumbnailUrl = "http://$cameraIp/DCIM/$filename",
+                downloadUrl = "http://$ip/DCIM/$filename",
+                thumbnailUrl = "http://$ip/DCIM/$filename",
                 size = sizeBytes?.let { formatBytes(it) } ?: "",
                 time = if (time.isNotBlank()) time else "Unknown date"
             )
         }.distinctBy { it.filename }
+    }
+
+    private fun requireCurrentIp(): String {
+        return currentEndpoint?.ip?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("AppHttpProtocol is not connected to any endpoint")
     }
 
     private fun formatBytes(bytes: Long): String {
