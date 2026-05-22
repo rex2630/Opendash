@@ -59,19 +59,16 @@ class AppHttpProtocol(
         emptyList()
     )
 
-    private val lightweightProbeRequests = listOf(
+    // Dokumentace potvrzuje: getdeviceattr a getsdinfo jsou spolehlivé probe endpointy
+    private val probeRequests = listOf(
         ProbeRequest("getdeviceattr"),
-        ProbeRequest("getsdinfo"),
-        ProbeRequest("getparamvalue", mapOf("param" to "all")),
-        ProbeRequest("getparamitems", mapOf("param" to "all"))
+        ProbeRequest("getsdinfo")
     )
 
     override suspend fun canHandle(endpoint: CameraEndpoint): Boolean = withContext(Dispatchers.IO) {
         val ip = endpoint.ip.trim()
         val discovered = discoverWorkingBasePath(ip)
-
         AppLogger.d(TAG, "canHandle ip=$ip -> basePath=${discovered?.joinToString("/")}")
-
         discovered != null
     }
 
@@ -93,29 +90,33 @@ class AppHttpProtocol(
 
         appBasePath = discoveredBasePath
 
-        val attr = sendAppCommand("getdeviceattr")
-        val sd = sendAppCommand("getsdinfo")
-        val items = sendAppCommand("getparamitems", mapOf("param" to "all"))
+        // Dokumentované endpointy: getdeviceattr, getproductinfo, getsdinfo,
+        // getbatteryinfo, getrecduration, getparamvalue, setparamvalue, setsystime
+        val attr      = sendAppCommand("getdeviceattr")
+        val product   = sendAppCommand("getproductinfo")
+        val sd        = sendAppCommand("getsdinfo")
+        val battery   = sendAppCommand("getbatteryinfo")
+        val items     = sendAppCommand("getparamitems", mapOf("param" to "all"))
         val valuesAll = sendAppCommand("getparamvalue", mapOf("param" to "all"))
-        val rec = sendAppCommand("getparamvalue", mapOf("param" to "rec"))
-        val timeSync = syncTime()
-        val enterRecorder = enterRecorder()
-        val media = sendAppCommand("getmediainfo", client = slowClient)
+        val rec       = sendAppCommand("getparamvalue", mapOf("param" to "rec"))
+        val timeSync  = syncTime()
+        val media     = sendAppCommand("getmediainfo", client = slowClient)
 
-        AppLogger.d(TAG, "Connected APP basePath=${appBasePath.joinToString("/")}")
         AppLogger.d(TAG, "getdeviceattr=$attr")
+        AppLogger.d(TAG, "getproductinfo=$product")
         AppLogger.d(TAG, "getsdinfo=$sd")
+        AppLogger.d(TAG, "getbatteryinfo=$battery")
         AppLogger.d(TAG, "getparamitems=$items")
         AppLogger.d(TAG, "getparamvalue(all)=$valuesAll")
         AppLogger.d(TAG, "getparamvalue(rec)=$rec")
         AppLogger.d(TAG, "getmediainfo=$media")
-        AppLogger.d(TAG, "enterrecorder=$enterRecorder")
         AppLogger.d(TAG, "setsystime=$timeSync")
+        AppLogger.d(TAG, "Connected APP basePath=${appBasePath.joinToString("/")}")
 
-        val hasPrimaryHandshake = looksLikeSuccess(attr)
-        val hasSecondarySignal = listOf(sd, items, valuesAll, rec, media, enterRecorder).any(::looksLikeUsableResponse)
+        val handshakeOk = listOf(attr, product, sd, battery, items, valuesAll, rec, media)
+            .any { looksLikeUsableResponse(it) }
 
-        if (!hasPrimaryHandshake && !hasSecondarySignal) {
+        if (!handshakeOk) {
             AppLogger.e(TAG, "APP API handshake returned no usable data for $ip")
             _connectionState.value = CameraState.Error("APP API handshake failed on $ip")
             currentEndpoint = null
@@ -123,21 +124,20 @@ class AppHttpProtocol(
         }
 
         _connectionState.value = CameraState.Connected
-        AppLogger.i(TAG, "Camera connected")
+        AppLogger.i(TAG, "Camera connected via ${appBasePath.joinToString("/")}")
         startHeartbeat()
         true
     }
 
     override suspend fun getLiveStreamUrl(): String = withContext(Dispatchers.IO) {
         val ip = requireCurrentIp()
+        // Dokumentace potvrzuje RTSP stream na /liveRTSP; ostatní jsou fallbacky
         listOf(
             "rtsp://$ip/liveRTSP/av4",
             "rtsp://$ip/liveRTSP/av2",
             "rtsp://$ip/liveRTSP/av1",
             "rtsp://$ip/live",
-            "rtsp://$ip/stream0",
-            "http://$ip/live",
-            "http://$ip:8080/?action=stream"
+            "rtsp://$ip/stream0"
         ).first()
     }
 
@@ -174,28 +174,23 @@ class AppHttpProtocol(
         }
     }
 
+    // Dokumentace: nahrávání se ovládá přes setparamvalue?param=rec&value=1
     override suspend fun startRecording(): Boolean = withContext(Dispatchers.IO) {
-        val result = enterRecorder()
-            ?: sendAppCommand("setparamvalue", mapOf("param" to "rec", "value" to "1"))
-            ?: sendAppCommand("startrecord")
-
+        val result = sendAppCommand("setparamvalue", mapOf("param" to "rec", "value" to "1"))
         AppLogger.d(TAG, "startRecording result=$result")
         isSuccess(result)
     }
 
     override suspend fun stopRecording(): Boolean = withContext(Dispatchers.IO) {
         val result = sendAppCommand("setparamvalue", mapOf("param" to "rec", "value" to "0"))
-            ?: sendAppCommand("stoprecord")
-
         AppLogger.d(TAG, "stopRecording result=$result")
         isSuccess(result)
     }
 
+    // Dokumentace neobsahuje explicitní takephoto endpoint — setparamvalue je správná cesta
     override suspend fun takePhoto(): Boolean = withContext(Dispatchers.IO) {
-        val result = enterRecorder()
+        val result = sendAppCommand("setparamvalue", mapOf("param" to "cap", "value" to "1"))
             ?: sendAppCommand("capture")
-            ?: sendAppCommand("takephoto")
-
         AppLogger.d(TAG, "takePhoto result=$result")
         isSuccess(result)
     }
@@ -208,10 +203,12 @@ class AppHttpProtocol(
         AppLogger.i(TAG, "Camera disconnected")
     }
 
+    // Dokumentace: playback session = playback?param=enter → getfilelist → playback?param=exit
+    // getthumbnail?filename=/mnt/sdcard/... pro náhledy
     override suspend fun getFileList(): List<VideoFile> = withContext(Dispatchers.IO) {
         val files = mutableListOf<VideoFile>()
 
-        val playbackEnter = enterPlayback()
+        val playbackEnter = sendAppCommand("playback", mapOf("param" to "enter"), client = slowClient)
         AppLogger.d(TAG, "getFileList enterPlayback=$playbackEnter")
 
         val fileListResponse = sendAppCommand("getfilelist", client = slowClient)
@@ -226,11 +223,8 @@ class AppHttpProtocol(
             }
         }
 
-        val playbackExit = exitPlayback()
-        val recorderBack = enterRecorder()
-
+        val playbackExit = sendAppCommand("playback", mapOf("param" to "exit"), client = slowClient)
         AppLogger.d(TAG, "getFileList exitPlayback=$playbackExit")
-        AppLogger.d(TAG, "getFileList enterRecorder=$recorderBack")
         AppLogger.d(TAG, "getFileList parsed ${files.size} files")
 
         files.distinctBy { it.filename }
@@ -240,7 +234,6 @@ class AppHttpProtocol(
         val cleanName = filename.substringAfterLast("/")
         val result = sendAppCommand("deletefile", mapOf("name" to cleanName))
             ?: sendAppCommand("delmedia", mapOf("name" to cleanName))
-
         AppLogger.d(TAG, "deleteFile name=$cleanName result=$result")
         isSuccess(result)
     }
@@ -270,52 +263,64 @@ class AppHttpProtocol(
     override suspend fun formatSdCard(): Boolean = withContext(Dispatchers.IO) {
         val result = sendAppCommand("formatsd")
             ?: sendAppCommand("format")
-
         AppLogger.d(TAG, "formatSdCard result=$result")
         isSuccess(result)
     }
 
+    // Dokumentace: getparamvalue?param=rec + getsdinfo pro status
     suspend fun getDeviceStatus(): DeviceStatus = withContext(Dispatchers.IO) {
         val rec = sendAppCommand("getparamvalue", mapOf("param" to "rec"))
-        val sd = sendAppCommand("getsdinfo")
+        val sd  = sendAppCommand("getsdinfo")
 
         val status = DeviceStatus(
             isRecording = rec?.contains("1") == true || rec?.contains("on", true) == true,
-            hasSdCard = sd?.contains("sd", true) == true ||
-                sd?.contains("card", true) == true ||
-                sd?.contains("mount", true) == true
+            hasSdCard   = sd?.contains("sd", true) == true ||
+                          sd?.contains("card", true) == true ||
+                          sd?.contains("mount", true) == true
         )
 
         AppLogger.d(TAG, "getDeviceStatus rec=$rec sd=$sd status=$status")
         status
     }
 
+    // Dokumentace: getproductinfo endpoint potvrzen v vii_http.py
+    suspend fun getProductInfo(): String? = withContext(Dispatchers.IO) {
+        val result = sendAppCommand("getproductinfo")
+        AppLogger.d(TAG, "getProductInfo result=$result")
+        result
+    }
+
+    // Dokumentace: getbatteryinfo endpoint potvrzen v vii_http.py
+    suspend fun getBatteryInfo(): String? = withContext(Dispatchers.IO) {
+        val result = sendAppCommand("getbatteryinfo")
+        AppLogger.d(TAG, "getBatteryInfo result=$result")
+        result
+    }
+
+    // Dokumentace: getrecduration endpoint potvrzen v vii_http.py
+    suspend fun getRecDuration(): String? = withContext(Dispatchers.IO) {
+        val result = sendAppCommand("getrecduration")
+        AppLogger.d(TAG, "getRecDuration result=$result")
+        result
+    }
+
+    // Dokumentace: setparamvalue je obecná setter funkce pro všechny parametry
     suspend fun setWifiCredentials(ssid: String, pass: String): Boolean = withContext(Dispatchers.IO) {
-        val result = enterSettings()
-            ?: sendAppCommand("setwifi", mapOf("ssid" to ssid, "pwd" to pass))
-            ?: sendAppCommand("setapinfo", mapOf("ssid" to ssid, "pwd" to pass))
-
-        exitSettings()
-
-        AppLogger.d(TAG, "setWifiCredentials ssid=$ssid result=$result")
-        isSuccess(result)
+        val result = sendAppCommand("setparamvalue", mapOf("param" to "ssid", "value" to ssid))
+        val result2 = sendAppCommand("setparamvalue", mapOf("param" to "pwd", "value" to pass))
+        AppLogger.d(TAG, "setWifiCredentials ssid=$ssid result=$result result2=$result2")
+        isSuccess(result) || isSuccess(result2)
     }
 
     private suspend fun discoverWorkingBasePath(ip: String): List<String>? = withContext(Dispatchers.IO) {
         for (basePath in candidateBasePaths) {
-            for (probe in lightweightProbeRequests) {
-                val url = buildUrl(
-                    ip = ip,
-                    basePath = basePath,
-                    path = probe.path,
-                    query = probe.query
-                )
-
+            for (probe in probeRequests) {
+                val url = buildUrl(ip = ip, basePath = basePath, path = probe.path, query = probe.query)
                 val response = simpleGet(url, fastClient)
 
                 AppLogger.d(
                     TAG,
-                    "APP probe ip=$ip base=${basePath.joinToString("/")} path=${probe.path} url=$url -> ${response?.take(160)}"
+                    "probe ip=$ip base=${basePath.joinToString("/")} path=${probe.path} -> ${response?.take(80)}"
                 )
 
                 if (looksLikeUsableResponse(response)) {
@@ -336,31 +341,6 @@ class AppHttpProtocol(
         return simpleGet(url, client)
     }
 
-    private suspend fun enterPlayback(): String? {
-        return sendAppCommand("playback", mapOf("param" to "enter"), client = slowClient)
-    }
-
-    private suspend fun exitPlayback(): String? {
-        return sendAppCommand("playback", mapOf("param" to "exit"), client = slowClient)
-    }
-
-    private suspend fun enterRecorder(): String? {
-        return sendAppCommand("enterrecorder")
-            ?: sendAppCommand("setparamvalue", mapOf("param" to "rec", "value" to "1"))
-    }
-
-    private suspend fun exitRecorder(): String? {
-        return sendAppCommand("exitrecorder")
-    }
-
-    private suspend fun enterSettings(): String? {
-        return sendAppCommand("setting", mapOf("param" to "enter"))
-    }
-
-    private suspend fun exitSettings(): String? {
-        return sendAppCommand("setting", mapOf("param" to "exit"))
-    }
-
     private fun buildUrl(
         ip: String,
         basePath: List<String>,
@@ -372,16 +352,12 @@ class AppHttpProtocol(
             .host(ip)
 
         basePath.forEach { segment ->
-            if (segment.isNotBlank()) {
-                builder.addPathSegment(segment)
-            }
+            if (segment.isNotBlank()) builder.addPathSegment(segment)
         }
 
         path.split("/")
             .filter { it.isNotBlank() }
-            .forEach { segment ->
-                builder.addPathSegment(segment)
-            }
+            .forEach { segment -> builder.addPathSegment(segment) }
 
         query.forEach { (key, value) ->
             builder.addQueryParameter(key, value)
@@ -392,15 +368,10 @@ class AppHttpProtocol(
 
     private fun simpleGet(url: HttpUrl, client: OkHttpClient): String? {
         return try {
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .build()
-
+            val request = Request.Builder().url(url).get().build()
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string()?.trim()
                 AppLogger.d(TAG, "GET $url -> code=${response.code}, body=${body?.take(200)}")
-
                 if (!response.isSuccessful) return null
                 body
             }
@@ -413,14 +384,6 @@ class AppHttpProtocol(
     private fun syncTime(): String? {
         val value = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(Date())
         return sendAppCommand("setsystime", mapOf("date" to value), client = slowClient)
-    }
-
-    private fun looksLikeSuccess(result: String?): Boolean {
-        if (result.isNullOrBlank()) return false
-        return result.contains("\"result\":0") ||
-            result.contains("\"result\":\"0\"") ||
-            result.contains("ok", true) ||
-            result.contains("success", true)
     }
 
     private fun looksLikeUsableResponse(result: String?): Boolean {
@@ -439,17 +402,24 @@ class AppHttpProtocol(
             !result.contains("error", true)
     }
 
+    // Dokumentace: getthumbnail?filename=/mnt/sdcard/soubor.mp4 (přesný název parametru z vii_http.py)
     private fun parseFileList(raw: String): List<VideoFile> {
         val ip = requireCurrentIp()
         val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
 
-        val absolutePathRegex = Regex("""(/mnt/sdcard/[A-Za-z0-9_/\-\.]+)""", RegexOption.IGNORE_CASE)
-        val filenameRegex = Regex("""([A-Za-z0-9_\-]+\.(mp4|mov|ts|avi|jpg))""", RegexOption.IGNORE_CASE)
+        val absolutePathRegex = Regex(
+            """/mnt/sdcard/[A-Za-z0-9_/\-.]+""",
+            RegexOption.IGNORE_CASE
+        )
+        val filenameRegex = Regex(
+            """([A-Za-z0-9_\-]+\.(mp4|mov|ts|avi|jpg))""",
+            RegexOption.IGNORE_CASE
+        )
         val sizeRegex = Regex("""(?:size|filesize)[=:](\d+)""", RegexOption.IGNORE_CASE)
         val timeRegex = Regex("""(?:time|date)[=:]([^\n,]+)""", RegexOption.IGNORE_CASE)
 
         return lines.mapNotNull { line ->
-            val absolutePath = absolutePathRegex.find(line)?.groupValues?.getOrNull(1)
+            val absolutePath = absolutePathRegex.find(line)?.value
             val filename = absolutePath?.substringAfterLast("/")
                 ?: filenameRegex.find(line)?.groupValues?.getOrNull(1)
                 ?: return@mapNotNull null
@@ -459,10 +429,10 @@ class AppHttpProtocol(
 
             VideoFile(
                 filename = filename,
-                downloadUrl = absolutePath?.let { buildDownloadUrlForPath(ip, it) }
-                    ?: "http://$ip/DCIM/$filename",
+                downloadUrl = absolutePath?.let { "http://$ip$it" }
+                    ?: "http://$ip/mnt/sdcard/$filename",
                 thumbnailUrl = absolutePath?.let { buildThumbnailUrl(ip, it) }
-                    ?: "http://$ip/DCIM/$filename",
+                    ?: "http://$ip/mnt/sdcard/$filename",
                 size = sizeBytes?.let { formatBytes(it) } ?: "",
                 time = if (time.isNotBlank()) time else "Unknown date"
             )
@@ -473,12 +443,12 @@ class AppHttpProtocol(
         val ip = requireCurrentIp()
         val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
         val fileRegex = Regex("""([A-Za-z0-9_\-]+\.(mp4|mov|ts|avi|jpg))""", RegexOption.IGNORE_CASE)
-        val absolutePathRegex = Regex("""(/mnt/sdcard/[A-Za-z0-9_/\-\.]+)""", RegexOption.IGNORE_CASE)
+        val absolutePathRegex = Regex("""/mnt/sdcard/[A-Za-z0-9_/\-.]+""", RegexOption.IGNORE_CASE)
         val sizeRegex = Regex("""size[=:](\d+)""", RegexOption.IGNORE_CASE)
         val timeRegex = Regex("""time[=:]([^\n,]+)""", RegexOption.IGNORE_CASE)
 
         return lines.mapNotNull { line ->
-            val absolutePath = absolutePathRegex.find(line)?.groupValues?.getOrNull(1)
+            val absolutePath = absolutePathRegex.find(line)?.value
             val filename = absolutePath?.substringAfterLast("/")
                 ?: fileRegex.find(line)?.groupValues?.getOrNull(1)
                 ?: return@mapNotNull null
@@ -488,26 +458,23 @@ class AppHttpProtocol(
 
             VideoFile(
                 filename = filename,
-                downloadUrl = absolutePath?.let { buildDownloadUrlForPath(ip, it) }
-                    ?: "http://$ip/DCIM/$filename",
+                downloadUrl = absolutePath?.let { "http://$ip$it" }
+                    ?: "http://$ip/mnt/sdcard/$filename",
                 thumbnailUrl = absolutePath?.let { buildThumbnailUrl(ip, it) }
-                    ?: "http://$ip/DCIM/$filename",
+                    ?: "http://$ip/mnt/sdcard/$filename",
                 size = sizeBytes?.let { formatBytes(it) } ?: "",
                 time = if (time.isNotBlank()) time else "Unknown date"
             )
         }.distinctBy { it.filename }
     }
 
-    private fun buildDownloadUrlForPath(ip: String, absolutePath: String): String {
-        return "http://$ip$absolutePath"
-    }
-
+    // Dokumentace z vii_http.py: getthumbnail používá parametr "filename", ne "file"
     private fun buildThumbnailUrl(ip: String, absolutePath: String): String {
         return buildUrl(
             ip = ip,
             basePath = appBasePath,
             path = "getthumbnail",
-            query = mapOf("file" to absolutePath)
+            query = mapOf("filename" to absolutePath)
         ).toString()
     }
 
